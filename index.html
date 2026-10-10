@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -822,6 +821,31 @@
       ワールドの解析・描画には端末の性能とメモリが必要です。
     </footer>
   </main>
+
+  <script>
+    (() => {
+      const fileInput = document.getElementById('worldFile');
+      const fileName = document.getElementById('fileName');
+      const loadButton = document.getElementById('loadButton');
+
+      if (!fileInput || !fileName) return;
+
+      fileInput.addEventListener('change', () => {
+        const file = fileInput.files && fileInput.files[0];
+
+        if (!file) {
+          fileName.textContent = '未選択';
+          if (loadButton) loadButton.disabled = true;
+          return;
+        }
+
+        fileName.textContent =
+          `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
+
+        if (loadButton) loadButton.disabled = false;
+      });
+    })();
+  </script>
 
   <script type="module" src="./main.js"></script>
 </body>
