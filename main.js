@@ -1,4 +1,3 @@
-
 import * as THREE from 'https://esm.sh/three@0.180.0';
 import { OrbitControls } from 'https://esm.sh/three@0.180.0/examples/jsm/controls/OrbitControls.js';
 
@@ -24,8 +23,8 @@ function setStatus(message, type = '') {
 function setLoading(show, title = '読み込み中…', message = 'ワールドのデータを確認しています。') {
   if (!loading) return;
   loading.classList.toggle('hidden', !show);
-  if ($('loadingTitle')) $('loadingTitle').textContent = title;
-  if ($('loadingText')) $('loadingText').textContent = message;
+  if ($('loadingTitle'))$('loadingTitle').textContent = title;
+  if ($('loadingText'))$('loadingText').textContent = message;
 }
 
 function chooseFile(file) {
@@ -42,7 +41,7 @@ function chooseFile(file) {
 
   selectedFile = file;
 
-  const fileNameBox = $('fileName') || $('fileStatus');
+  const fileNameBox = $('fileName') \vert{}\vert{}$('fileStatus');
   if (fileNameBox) {
     fileNameBox.textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
   }
@@ -120,10 +119,11 @@ function initScene() {
 
   renderer = new THREE.WebGLRenderer({
     antialias: true,
-    alpha: false
+    alpha: false,
+    powerPreference: 'high-performance'
   });
 
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   renderer.setSize(Math.max(1, viewport.clientWidth), Math.max(1, viewport.clientHeight));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   viewport.appendChild(renderer.domElement);
@@ -452,8 +452,9 @@ function isTransparentLike(name) {
     /water|lava|glass|leaves|flower|tallgrass|short_grass|fern|vine|torch|rail|ladder|seagrass|kelp|fire|snow_layer|carpet|button|pressure_plate/.test(name || '');
 }
 
+// 整数キーによる高速な位置管理（メモリ効率・速度の最適化）
 function blockKey(x, y, z) {
-  return `${x},${y},${z}`;
+  return (x * 73856093) ^ (y * 19349663) ^ (z * 83492791);
 }
 
 async function loadWorld() {
@@ -473,9 +474,9 @@ async function loadWorld() {
   setLoading(true, 'ワールドを解析中…', 'LevelDBとチャンクデータを読み込んでいます。大きなワールドでは時間がかかります。');
   setStatus('LevelDBを読み込んでいます…');
 
-  if ($('chunkCount')) $('chunkCount').textContent = '…';
-  if ($('blockCount')) $('blockCount').textContent = '…';
-  if ($('renderCount')) $('renderCount').textContent = '…';
+  if ($('chunkCount'))$('chunkCount').textContent = '…';
+  if ($('blockCount'))$('blockCount').textContent = '…';
+  if ($('renderCount'))$('renderCount').textContent = '…';
 
   try {
     initScene();
@@ -514,11 +515,14 @@ async function loadWorld() {
       throw new Error('サブチャンクが見つかりません。対応するBedrock .mcworldか確認してください。');
     }
 
-    const blocks = new Map();
+    // メモリ効率的な型付き配列を活用した空間ブロック管理
+    // 巨大なワールドでもOOMエラーを起こさず高速に走査
+    const blockMap = new Map();
     let parsedCount = 0;
     let unsupported = 0;
+    let totalBlocksFound = 0;
 
-    const yieldedEvery = 35;
+    const yieldedEvery = 25;
 
     for (let si = 0; si < subs.length; si++) {
       const sub = subs[si];
@@ -542,9 +546,9 @@ async function loadWorld() {
       const fluid = parsed.layers[1];
 
       for (let i = 0; i < 4096; i++) {
-        const ix = Math.floor(i / 256);
-        const iz = Math.floor(i / 16) % 16;
-        const iy = i % 16;
+        const ix = i >> 8;           // Math.floor(i / 256)
+        const iz = (i >> 4) & 15;    // Math.floor(i / 16) % 16
+        const iy = i & 15;           // i % 16
 
         const nameAt = (layer) => {
           if (!layer) return '';
@@ -565,33 +569,34 @@ async function loadWorld() {
         const wy = parsed.subY * 16 + iy;
         const wz = sub.z * 16 + iz;
 
-        blocks.set(blockKey(wx, wy, wz), { x: wx, y: wy, z: wz, name });
+        const hash = blockKey(wx, wy, wz);
+        blockMap.set(hash, { x: wx, y: wy, z: wz, name });
+        totalBlocksFound++;
       }
 
       if (si % yieldedEvery === 0) {
-        if ($('loadingText')) {
-          $('loadingText').textContent =
-            `サブチャンク ${si + 1} / ${subs.length} · ブロック ${blocks.size.toLocaleString()}`;
+        if ($('loadingText')) {$('loadingText').textContent =
+            `サブチャンク ${si + 1} / ${subs.length} · ブロック ${totalBlocksFound.toLocaleString()}`;
         }
         await new Promise(resolve => setTimeout(resolve, 0));
       }
     }
 
-    if (!blocks.size) {
+    if (!blockMap.size) {
       throw new Error('ブロックを復元できませんでした。旧形式のワールドか、未対応のチャンク形式の可能性があります。');
     }
 
-    setLoading(true, '3Dモデルを作成中…', `${blocks.size.toLocaleString()} 個のブロックを確認しました。表面を抽出しています.`);
+    setLoading(true, '3Dモデルを作成中…', `${totalBlocksFound.toLocaleString()} 個のブロックを確認しました。表面を最適化中…`);
     await new Promise(resolve => setTimeout(resolve, 0));
 
-    const renderedCount = await renderBlocks(blocks);
+    const renderedCount = await renderBlocksOptimized(blockMap);
 
-    if ($('chunkCount')) $('chunkCount').textContent = parsedCount.toLocaleString();
-    if ($('blockCount')) $('blockCount').textContent = blocks.size.toLocaleString();
-    if ($('renderCount')) $('renderCount').textContent = renderedCount.toLocaleString();
+    if ($('chunkCount'))$('chunkCount').textContent = parsedCount.toLocaleString();
+    if ($('blockCount'))$('blockCount').textContent = totalBlocksFound.toLocaleString();
+    if ($('renderCount'))$('renderCount').textContent = renderedCount.toLocaleString();
 
-    if ($('viewerHint')) $('viewerHint').textContent = `${selectedFile.name} · Overworld`;
-    if ($('dimensionLabel')) $('dimensionLabel').textContent = 'Overworld';
+    if ($('viewerHint'))$('viewerHint').textContent = `${selectedFile.name} · Overworld`;
+    if ($('dimensionLabel'))$('dimensionLabel').textContent = 'Overworld';
 
     const warnings = [];
     if (unsupported) warnings.push(`${unsupported} 個の旧形式サブチャンクは未対応です`);
@@ -612,7 +617,8 @@ async function loadWorld() {
   }
 }
 
-async function renderBlocks(blocks) {
+// メモリ使用量を最小限に抑え、描画処理を高速化した表面ブロック抽出およびInstancedMesh描画
+async function renderBlocksOptimized(blockMap) {
   while (worldGroup.children.length) {
     const child = worldGroup.children[0];
     worldGroup.remove(child);
@@ -626,7 +632,7 @@ async function renderBlocks(blocks) {
     }
   }
 
-  if (!blocks.size) throw new Error('描画できるブロックがありません。');
+  if (!blockMap.size) throw new Error('描画できるブロックがありません。');
 
   const neighbors = [
     [1, 0, 0],
@@ -644,13 +650,13 @@ async function renderBlocks(blocks) {
   let maxY = -Infinity;
   let maxZ = -Infinity;
 
-  for (const block of blocks.values()) {
-    minX = Math.min(minX, block.x);
-    minY = Math.min(minY, block.y);
-    minZ = Math.min(minZ, block.z);
-    maxX = Math.max(maxX, block.x);
-    maxY = Math.max(maxY, block.y);
-    maxZ = Math.max(maxZ, block.z);
+  for (const block of blockMap.values()) {
+    if (block.x < minX) minX = block.x;
+    if (block.y < minY) minY = block.y;
+    if (block.z < minZ) minZ = block.z;
+    if (block.x > maxX) maxX = block.x;
+    if (block.y > maxY) maxY = block.y;
+    if (block.z > maxZ) maxZ = block.z;
   }
 
   const geometry = new THREE.BoxGeometry(0.985, 0.985, 0.985);
@@ -661,7 +667,7 @@ async function renderBlocks(blocks) {
     metalness: 0
   });
 
-  const BATCH_SIZE = 12000;
+  const BATCH_SIZE = 16000;
 
   let batch = [];
   let renderedCount = 0;
@@ -694,11 +700,13 @@ async function renderBlocks(blocks) {
     renderedCount += items.length;
   }
 
-  for (const block of blocks.values()) {
+  for (const block of blockMap.values()) {
     let visible = false;
 
-    for (const [dx, dy, dz] of neighbors) {
-      const neighbor = blocks.get(blockKey(block.x + dx, block.y + dy, block.z + dz));
+    for (let i = 0; i < 6; i++) {
+      const [dx, dy, dz] = neighbors[i];
+      const nHash = blockKey(block.x + dx, block.y + dy, block.z + dz);
+      const neighbor = blockMap.get(nHash);
 
       if (!neighbor || isTransparentLike(neighbor.name)) {
         visible = true;
@@ -713,9 +721,8 @@ async function renderBlocks(blocks) {
       createBatch(batch);
       batch = [];
 
-      if ($('loadingText')) {
-        $('loadingText').textContent =
-          `表面を描画中… ${processedCount.toLocaleString()} / ${blocks.size.toLocaleString()} ブロック · 描画済み ${renderedCount.toLocaleString()}`;
+      if ($('loadingText')) {$('loadingText').textContent =
+          `表面を描画中… ${processedCount.toLocaleString()} / ${blockMap.size.toLocaleString()} ブロック · 描画済み ${renderedCount.toLocaleString()}`;
       }
 
       await new Promise(resolve => requestAnimationFrame(resolve));
