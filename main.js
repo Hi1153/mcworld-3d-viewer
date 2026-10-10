@@ -1,4 +1,3 @@
-
 import * as THREE from 'https://esm.sh/three@0.180.0';
 import { OrbitControls } from 'https://esm.sh/three@0.180.0/examples/jsm/controls/OrbitControls.js';
 
@@ -47,7 +46,9 @@ function setLoading(
 function chooseFile(file) {
   if (!file) return;
 
-  if (!file.name.toLowerCase().endsWith('.mcworld')) {
+  const extension = file.name.split('.').pop().toLowerCase();
+
+  if (extension !== 'mcworld' && extension !== 'zip') {
     selectedFile = null;
 
     if (loadButton) {
@@ -55,7 +56,7 @@ function chooseFile(file) {
     }
 
     setStatus(
-      '拡張子が .mcworld のファイルを選択してください。',
+      '未対応の拡張子です。.mcworld または .zip ファイルを選択してください。',
       'error'
     );
 
@@ -80,7 +81,9 @@ function chooseFile(file) {
   }
 
   setStatus(
-    'ファイルを選択しました。3D表示を開始できます。',
+    extension === 'mcworld'
+      ? 'mcworldファイルを選択しました。3D表示を開始できます。'
+      : 'ZIPファイルを選択しました。Minecraftワールド形式か確認して読み込みます。',
     'success'
   );
 }
@@ -595,7 +598,7 @@ function blockKey(x, y, z) {
 
 async function loadWorld() {
   if (!selectedFile) {
-    setStatus('先に .mcworld ファイルを選択してください。', 'error');
+    setStatus('先に .mcworld または .zip ファイルを選択してください。', 'error');
     return;
   }
 
@@ -624,7 +627,7 @@ async function loadWorld() {
     initScene();
 
     const { readMcworld } = await import(
-      'https://esm.sh/mcbe-leveldb-reader@5.0.1'
+      'https://esm.sh/mcbe-leveldb-reader@5.0.1?bundle'
     );
 
     const entries = await readMcworld(selectedFile);
