@@ -626,9 +626,9 @@ async function loadWorld() {
   try {
     initScene();
 
-    const { readMcworld } = await import(
-      'https://esm.sh/mcbe-leveldb-reader@5.0.1?bundle'
-    );
+  const { readMcworld } = await import(
+    'https://cdn.jsdelivr.net/npm/mcbe-leveldb-reader@5.0.1/+esm'
+  );
 
     const entries = await readMcworld(selectedFile);
 
