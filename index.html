@@ -1,22 +1,322 @@
-<input
-  type="file"
-  id="worldFile"
-  accept=".mcworld,.zip,*/*"
->
-<p id="fileStatus">未選択</p>
 
-<script>
-const worldFile = document.getElementById("worldFile");
-const fileStatus = document.getElementById("fileStatus");
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <title>MCWorld 3D Viewer</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
 
-worldFile.addEventListener("change", () => {
-  const file = worldFile.files[0];
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #fff;
+      color: #202923;
+    }
 
-  if (!file) {
-    fileStatus.textContent = "未選択";
-    return;
-  }
+    header {
+      padding: 18px 20px;
+      border-bottom: 1px solid #e5e9e6;
+    }
 
-  fileStatus.textContent = `選択済み：${file.name}`;
-});
-</script>
+    header h1 {
+      margin: 0;
+      font-size: 21px;
+    }
+
+    header p {
+      margin: 6px 0 0;
+      color: #69756d;
+      font-size: 13px;
+    }
+
+    main {
+      max-width: 1200px;
+      margin: auto;
+      padding: 18px;
+    }
+
+    .panel {
+      padding: 16px;
+      border: 1px solid #e1e7e2;
+      border-radius: 14px;
+      background: #fff;
+      margin-bottom: 14px;
+    }
+
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+    }
+
+    #dropzone {
+      padding: 18px;
+      border: 2px dashed #b9c9bd;
+      border-radius: 12px;
+      text-align: center;
+      background: #f8faf8;
+    }
+
+    #worldFile {
+      display: block;
+      width: 100%;
+      margin: 12px 0;
+      font-size: 14px;
+    }
+
+    #fileName {
+      overflow-wrap: anywhere;
+      color: #526158;
+      font-size: 13px;
+    }
+
+    button {
+      min-height: 42px;
+      padding: 10px 16px;
+      border: 1px solid #d8e0da;
+      border-radius: 9px;
+      background: #fff;
+      color: #202923;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+    }
+
+    button.primary {
+      width: 100%;
+      margin-top: 12px;
+      border-color: #23794a;
+      background: #23794a;
+      color: #fff;
+      font-weight: 700;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .stat {
+      padding: 12px 8px;
+      background: #f5f7f5;
+      border-radius: 9px;
+      text-align: center;
+    }
+
+    .stat span {
+      display: block;
+      color: #69756d;
+      font-size: 12px;
+    }
+
+    .stat strong {
+      display: block;
+      margin-top: 5px;
+      font-size: 18px;
+      overflow-wrap: anywhere;
+    }
+
+    .status {
+      margin-top: 12px;
+      padding: 11px;
+      border-radius: 8px;
+      background: #f2f5f2;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .status.error {
+      background: #fff0f0;
+      color: #b42318;
+    }
+
+    .status.success {
+      background: #edf8f0;
+      color: #176b38;
+    }
+
+    #viewport {
+      position: relative;
+      width: 100%;
+      height: min(65vh, 650px);
+      min-height: 300px;
+      overflow: hidden;
+      border: 1px solid #e1e7e2;
+      border-radius: 14px;
+      background: #f7faf9;
+    }
+
+    #viewport canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+
+    #emptyState {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      color: #7b8780;
+      text-align: center;
+      pointer-events: none;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    #loading {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: #ffffffdd;
+    }
+
+    .loading-card {
+      width: min(100%, 360px);
+      padding: 24px;
+      border: 1px solid #e1e7e2;
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: 0 8px 30px #00000012;
+    }
+
+    .loading-card h2 {
+      margin-top: 0;
+      font-size: 18px;
+    }
+
+    #loadingText {
+      color: #657169;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .viewer-fullscreen main {
+      max-width: none;
+    }
+
+    .viewer-fullscreen #viewport {
+      height: calc(100dvh - 160px);
+    }
+
+    @media (max-width: 600px) {
+      main {
+        padding: 12px;
+      }
+
+      header {
+        padding: 15px;
+      }
+
+      #viewport {
+        height: 52vh;
+        min-height: 260px;
+      }
+
+      .stats {
+        gap: 5px;
+      }
+
+      .stat strong {
+        font-size: 15px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>MCWorld 3D Viewer</h1>
+    <p>Minecraft Bedrock のワールドをブラウザで3D表示</p>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>ワールドを読み込む</h2>
+
+      <div id="dropzone" tabindex="0">
+        <p>mcworld ファイルを選択</p>
+        <input
+          type="file"
+          id="worldFile"
+          accept=".mcworld,.zip,application/octet-stream"
+        >
+        <div id="fileName">ファイル未選択</div>
+      </div>
+
+      <button id="loadButton" class="primary" disabled>
+        3D描画
+      </button>
+
+      <div id="status" class="status" role="status" aria-live="polite">
+        mcworld ファイルを選択してください。
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="toolbar">
+        <button id="resetView" type="button">視点をリセット</button>
+        <button id="fullscreen" type="button">全画面表示</button>
+      </div>
+
+      <div id="viewport">
+        <div id="emptyState">
+          ワールドを選択して「3D描画」を押してください。
+        </div>
+      </div>
+
+      <div id="loading" class="hidden">
+        <div class="loading-card">
+          <h2 id="loadingTitle">読み込み中…</h2>
+          <p id="loadingText">ワールドのデータを確認しています。</p>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div class="stat">
+          <span>解析済みサブチャンク</span>
+          <strong id="chunkCount">0</strong>
+        </div>
+        <div class="stat">
+          <span>ブロック数</span>
+          <strong id="blockCount">0</strong>
+        </div>
+        <div class="stat">
+          <span>描画数</span>
+          <strong id="renderCount">0</strong>
+        </div>
+      </div>
+
+      <p id="viewerHint">ワールド未読み込み</p>
+      <p>ディメンション：<span id="dimensionLabel">未読み込み</span></p>
+    </section>
+  </main>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
