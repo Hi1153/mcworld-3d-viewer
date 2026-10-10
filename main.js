@@ -92,7 +92,15 @@ if (dropzone) {
   });
 }
 
-if (loadButton) loadButton.addEventListener('click', loadWorld);
+// 描画ボタンのイベント登録を確実に実行
+if (loadButton) {
+  loadButton.addEventListener('click', (e) => {
+    e.preventDefault();
+    loadWorld();
+  });
+} else {
+  console.error('HTMLに id="loadButton" がありません。');
+}
 
 $('resetView')?.addEventListener('click', resetCamera);
 
@@ -452,21 +460,21 @@ function isTransparentLike(name) {
     /water|lava|glass|leaves|flower|tallgrass|short_grass|fern|vine|torch|rail|ladder|seagrass|kelp|fire|snow_layer|carpet|button|pressure_plate/.test(name || '');
 }
 
-// 整数キーによる高速な位置管理（メモリ効率・速度の最適化）
 function blockKey(x, y, z) {
   return (x * 73856093) ^ (y * 19349663) ^ (z * 83492791);
 }
 
 async function loadWorld() {
   if (!selectedFile) {
-    setStatus('先に .mcworld または .zip ファイルを選択してください。', 'error');
-    return;
+    if (fileInput && fileInput.files && fileInput.files[0]) {
+      selectedFile = fileInput.files[0];
+    } else {
+      setStatus('先に .mcworld または .zip ファイルを選択してください。', 'error');
+      return;
+    }
   }
 
-  if (!loadButton) {
-    setStatus('3D描画ボタンがHTMLにありません。', 'error');
-    return;
-  }
+  if (!loadButton) return;
 
   loadButton.disabled = true;
   $('emptyState')?.classList.add('hidden');
@@ -515,8 +523,6 @@ async function loadWorld() {
       throw new Error('サブチャンクが見つかりません。対応するBedrock .mcworldか確認してください。');
     }
 
-    // メモリ効率的な型付き配列を活用した空間ブロック管理
-    // 巨大なワールドでもOOMエラーを起こさず高速に走査
     const blockMap = new Map();
     let parsedCount = 0;
     let unsupported = 0;
@@ -546,9 +552,9 @@ async function loadWorld() {
       const fluid = parsed.layers[1];
 
       for (let i = 0; i < 4096; i++) {
-        const ix = i >> 8;           // Math.floor(i / 256)
-        const iz = (i >> 4) & 15;    // Math.floor(i / 16) % 16
-        const iy = i & 15;           // i % 16
+        const ix = i >> 8;
+        const iz = (i >> 4) & 15;
+        const iy = i & 15;
 
         const nameAt = (layer) => {
           if (!layer) return '';
@@ -617,7 +623,6 @@ async function loadWorld() {
   }
 }
 
-// メモリ使用量を最小限に抑え、描画処理を高速化した表面ブロック抽出およびInstancedMesh描画
 async function renderBlocksOptimized(blockMap) {
   while (worldGroup.children.length) {
     const child = worldGroup.children[0];
