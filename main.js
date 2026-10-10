@@ -1,9 +1,9 @@
 
 import * as THREE from 'https://esm.sh/three@0.180.0';
 import { OrbitControls } from 'https://esm.sh/three@0.180.0/examples/jsm/controls/OrbitControls.js';
-import { readMcworld } from 'https://esm.sh/mcbe-leveldb-reader@5.0.1';
 
 const $ = (id) => document.getElementById(id);
+
 const fileInput = $('worldFile');
 const dropzone = $('dropzone');
 const loadButton = $('loadButton');
@@ -21,22 +21,44 @@ const MAX_RENDERED = 130000;
 
 function setStatus(message, type = '') {
   if (!statusBox) return;
+
   statusBox.textContent = message;
   statusBox.className = `status ${type}`.trim();
 }
 
-function setLoading(show, title = '読み込み中…', message = 'ワールドのデータを確認しています。') {
+function setLoading(
+  show,
+  title = '読み込み中…',
+  message = 'ワールドのデータを確認しています。'
+) {
   if (!loading) return;
+
   loading.classList.toggle('hidden', !show);
-  if ($('loadingTitle')) $('loadingTitle').textContent = title;
-  if ($('loadingText')) $('loadingText').textContent = message;
+
+  if ($('loadingTitle')) {
+    $('loadingTitle').textContent = title;
+  }
+
+  if ($('loadingText')) {
+    $('loadingText').textContent = message;
+  }
 }
 
 function chooseFile(file) {
   if (!file) return;
 
   if (!file.name.toLowerCase().endsWith('.mcworld')) {
-    setStatus('拡張子が .mcworld のファイルを選択してください。', 'error');
+    selectedFile = null;
+
+    if (loadButton) {
+      loadButton.disabled = true;
+    }
+
+    setStatus(
+      '拡張子が .mcworld のファイルを選択してください。',
+      'error'
+    );
+
     return;
   }
 
@@ -45,20 +67,31 @@ function chooseFile(file) {
   const fileNameBox = $('fileName') || $('fileStatus');
 
   if (fileNameBox) {
-    fileNameBox.textContent = $('fileName')
-      ? `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`
-      : `選択済み：${file.name}`;
+    fileNameBox.textContent =
+      `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
+  } else {
+    console.error(
+      'HTMLに id="fileName" または id="fileStatus" がありません。'
+    );
   }
 
-  if (loadButton) loadButton.disabled = false;
+  if (loadButton) {
+    loadButton.disabled = false;
+  }
 
-  setStatus('ファイルを選択しました。3D表示を開始できます。');
+  setStatus(
+    'ファイルを選択しました。3D表示を開始できます。',
+    'success'
+  );
 }
 
 if (fileInput) {
-  fileInput.addEventListener('change', () => {
-    chooseFile(fileInput.files?.[0]);
+  fileInput.addEventListener('change', (event) => {
+    const file = event.currentTarget.files?.[0];
+    chooseFile(file);
   });
+} else {
+  console.error('HTMLに id="worldFile" がありません。');
 }
 
 if (dropzone) {
@@ -84,6 +117,7 @@ if (dropzone) {
   }
 
   dropzone.addEventListener('drop', (event) => {
+    event.preventDefault();
     chooseFile(event.dataTransfer?.files?.[0]);
   });
 }
@@ -122,8 +156,15 @@ function initScene() {
     alpha: false
   });
 
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
-  renderer.setSize(viewport.clientWidth, viewport.clientHeight);
+  renderer.setPixelRatio(
+    Math.min(window.devicePixelRatio || 1, 1.8)
+  );
+
+  renderer.setSize(
+    Math.max(1, viewport.clientWidth),
+    Math.max(1, viewport.clientHeight)
+  );
+
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   viewport.appendChild(renderer.domElement);
 
@@ -134,7 +175,9 @@ function initScene() {
   controls.minDistance = 4;
   controls.maxDistance = 2500;
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x83928b, 2.15));
+  scene.add(
+    new THREE.HemisphereLight(0xffffff, 0x83928b, 2.15)
+  );
 
   const sun = new THREE.DirectionalLight(0xffffff, 2.1);
   sun.position.set(120, 180, 100);
@@ -164,6 +207,7 @@ function resizeRenderer() {
 
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+
   renderer.setSize(w, h);
 }
 
@@ -201,7 +245,6 @@ function isAir(name) {
     name === 'minecraft:void_air';
 }
 
-// Bedrock persistent block palettes use little-endian NBT compounds.
 function parseNbtCompound(bytes, state) {
   const view = new DataView(
     bytes.buffer,
@@ -213,6 +256,7 @@ function parseNbtCompound(bytes, state) {
     if (state.p >= bytes.length) {
       throw new Error('NBTデータが途中で終わっています');
     }
+
     return bytes[state.p++];
   };
 
@@ -294,12 +338,17 @@ function parseNbtCompound(bytes, state) {
       case 7: {
         const n = readI32();
 
-        if (n < 0 || n > 10000000 || state.p + n > bytes.length) {
+        if (
+          n < 0 ||
+          n > 10000000 ||
+          state.p + n > bytes.length
+        ) {
           throw new Error('NBT byte array length is invalid');
         }
 
         const a = bytes.slice(state.p, state.p + n);
         state.p += n;
+
         return a;
       }
 
@@ -438,7 +487,8 @@ function parseStorage(bytes, cursor) {
 
     for (let i = 0; i < 4096; i++) {
       const word = words[Math.floor(i / perWord)];
-      indices[i] = (word >>> ((i % perWord) * bits)) & mask;
+      indices[i] =
+        (word >>> ((i % perWord) * bits)) & mask;
     }
 
     if (cursor + 4 > bytes.length) {
@@ -572,6 +622,10 @@ async function loadWorld() {
 
   try {
     initScene();
+
+    const { readMcworld } = await import(
+      'https://esm.sh/mcbe-leveldb-reader@5.0.1'
+    );
 
     const entries = await readMcworld(selectedFile);
 
@@ -712,7 +766,9 @@ async function loadWorld() {
 
     renderBlocks(blocks);
 
-    if ($('chunkCount')) $('chunkCount').textContent = parsedCount.toLocaleString();
+    if ($('chunkCount')) {
+      $('chunkCount').textContent = parsedCount.toLocaleString();
+    }
 
     if ($('blockCount')) {
       $('blockCount').textContent =
