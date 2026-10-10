@@ -1,67 +1,22 @@
-<!doctype html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#ffffff">
-  <title>Minecraft World Viewer 3D</title>
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-  <header class="topbar">
-    <a class="brand" href="./" aria-label="Minecraft World Viewer 3D">
-      <span class="brand-icon">▦</span>
-      <span><strong>World Viewer</strong><small>MINECRAFT BEDROCK 3D</small></span>
-    </a>
-    <span class="local-badge"><span></span>ブラウザ内処理</span>
-  </header>
+<input
+  type="file"
+  id="worldFile"
+  accept=".mcworld,.zip,*/*"
+>
+<p id="fileStatus">未選択</p>
 
-  <main class="layout">
-    <section class="intro">
-      <p class="eyebrow">BEDROCK WORLD EXPLORER</p>
-      <h1>ワールドを、<span>立体で見よう。</span></h1>
-      <p class="lead">統合版の .mcworld を読み込んで、ブロックの世界を3Dで探索。</p>
-    </section>
+<script>
+const worldFile = document.getElementById("worldFile");
+const fileStatus = document.getElementById("fileStatus");
 
-    <section class="workspace">
-      <aside class="sidebar">
-        <div class="panel-heading"><span class="step">01</span><div><h2>ワールドを読み込む</h2><p>統合版の .mcworld ファイル</p></div></div>
-        <label id="dropzone" class="dropzone" for="worldFile" tabindex="0">
-          <span class="upload-icon">↑</span>
-          <strong>ファイルを選択</strong>
-          <span>またはここにドラッグ＆ドロップ</span>
-          <small>.mcworld</small>
-        </label>
-        <input id="worldFile" type="file" accept=".mcworld,application/octet-stream" hidden>
-        <div id="fileName" class="filename">ファイル未選択</div>
-        <button id="loadButton" class="primary-button" disabled>3D表示を開始 <span>→</span></button>
-        <div class="notice"><strong>対応状況</strong><p>パレット形式のサブチャンク（バージョン8・9）を解析します。古い形式や特殊なワールドは一部表示できない場合があります。</p></div>
-        <div class="panel-heading stats-heading"><span class="step">02</span><div><h2>読み込み情報</h2><p>検出したワールドデータ</p></div></div>
-        <div class="stats">
-          <div><span>サブチャンク</span><strong id="chunkCount">—</strong></div>
-          <div><span>ブロック</span><strong id="blockCount">—</strong></div>
-          <div><span>描画ブロック</span><strong id="renderCount">—</strong></div>
-        </div>
-        <div id="status" class="status" role="status">.mcworld ファイルを選択してください。</div>
-      </aside>
+worldFile.addEventListener("change", () => {
+  const file = worldFile.files[0];
 
-      <section class="viewer-panel">
-        <div class="viewer-toolbar">
-          <div><strong>3Dプレビュー</strong><span id="viewerHint">ワールドを読み込むと表示されます</span></div>
-          <div class="toolbar-actions">
-            <button id="resetView" class="icon-button" title="視点をリセット" aria-label="視点をリセット">⟳</button>
-            <button id="fullscreen" class="icon-button" title="全画面表示" aria-label="全画面表示">⛶</button>
-          </div>
-        </div>
-        <div id="viewport" class="viewport">
-          <div id="emptyState" class="empty-state"><div class="cube-art"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><strong>ワールドはここに表示されます</strong><p>ファイルを選択して「3D表示を開始」を押してください。</p></div>
-          <div id="loading" class="loading hidden"><span class="spinner"></span><strong id="loadingTitle">読み込み中…</strong><p id="loadingText">ワールドのデータを確認しています。</p></div>
-        </div>
-        <div class="viewer-footer"><span><kbd>ドラッグ</kbd> 回転</span><span><kbd>ホイール</kbd> ズーム</span><span><kbd>右ドラッグ</kbd> 移動</span><span id="dimensionLabel">Overworld</span></div>
-      </section>
-    </section>
-    <footer>Made for Minecraft Bedrock worlds · Uses <a href="https://github.com/HoloPrint-MC/MCBE-LevelDB-reader" target="_blank" rel="noreferrer">MCBE-LevelDB-reader</a> and <a href="https://threejs.org/" target="_blank" rel="noreferrer">Three.js</a></footer>
-  </main>
-  <script type="module" src="main.js"></script>
-</body>
-</html>
+  if (!file) {
+    fileStatus.textContent = "未選択";
+    return;
+  }
+
+  fileStatus.textContent = `選択済み：${file.name}`;
+});
+</script>
