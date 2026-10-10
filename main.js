@@ -14,10 +14,6 @@ let selectedFile = null;
 let scene, camera, renderer, controls, worldGroup, resizeObserver;
 let initialCamera = null;
 
-const MAX_SUBCHUNKS = 3500;
-const MAX_BLOCKS = 450000;
-const MAX_RENDERED = 130000;
-
 function setStatus(message, type = '') {
   if (!statusBox) return;
 
@@ -626,9 +622,9 @@ async function loadWorld() {
   try {
     initScene();
 
-  const { readMcworld } = await import(
-    'https://cdn.jsdelivr.net/npm/mcbe-leveldb-reader@5.0.1/+esm'
-  );
+    const { readMcworld } = await import(
+      'https://cdn.jsdelivr.net/npm/mcbe-leveldb-reader@5.0.1/+esm'
+    );
 
     const entries = await readMcworld(selectedFile);
 
@@ -668,8 +664,6 @@ async function loadWorld() {
       if (entry?.value instanceof Uint8Array) {
         subs.push({ key, x, z, y, bytes: entry.value });
       }
-
-      if (subs.length >= MAX_SUBCHUNKS) break;
     }
 
     if (!subs.length) {
@@ -737,11 +731,7 @@ async function loadWorld() {
           z: wz,
           name
         });
-
-        if (blocks.size >= MAX_BLOCKS) break;
       }
-
-      if (blocks.size >= MAX_BLOCKS) break;
 
       if (si % yieldedEvery === 0) {
         if ($('loadingText')) {
@@ -767,21 +757,18 @@ async function loadWorld() {
 
     await new Promise(resolve => setTimeout(resolve, 0));
 
-    renderBlocks(blocks);
+    const renderedCount = renderBlocks(blocks);
 
     if ($('chunkCount')) {
       $('chunkCount').textContent = parsedCount.toLocaleString();
     }
 
     if ($('blockCount')) {
-      $('blockCount').textContent =
-        blocks.size.toLocaleString() +
-        (blocks.size >= MAX_BLOCKS ? '+' : '');
+      $('blockCount').textContent = blocks.size.toLocaleString();
     }
 
     if ($('renderCount')) {
-      $('renderCount').textContent =
-        Math.min(blocks.size, MAX_RENDERED).toLocaleString();
+      $('renderCount').textContent = renderedCount.toLocaleString();
     }
 
     if ($('viewerHint')) {
@@ -793,14 +780,6 @@ async function loadWorld() {
     }
 
     const warnings = [];
-
-    if (subs.length >= MAX_SUBCHUNKS) {
-      warnings.push('処理したサブチャンク数に上限を適用しました');
-    }
-
-    if (blocks.size >= MAX_BLOCKS) {
-      warnings.push('ブロック数に上限を適用しました');
-    }
 
     if (unsupported) {
       warnings.push(`${unsupported} 個の旧形式サブチャンクは未対応です`);
@@ -868,8 +847,6 @@ function renderBlocks(blocks) {
     }
 
     if (visible) exposed.push(block);
-
-    if (exposed.length >= MAX_RENDERED) break;
   }
 
   if (!exposed.length) {
@@ -966,4 +943,6 @@ function renderBlocks(blocks) {
   };
 
   $('emptyState')?.classList.add('hidden');
+
+  return exposed.length;
 }
