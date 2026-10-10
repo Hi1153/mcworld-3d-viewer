@@ -60,8 +60,6 @@ if (fileInput) {
   fileInput.addEventListener('change', (event) => {
     chooseFile(event.currentTarget.files?.[0]);
   });
-} else {
-  console.error('HTMLに id="worldFile" がありません。');
 }
 
 if (dropzone) {
@@ -72,19 +70,19 @@ if (dropzone) {
     }
   });
 
-  for (const name of ['dragenter', 'dragover']) {
+  ['dragenter', 'dragover'].forEach(name => {
     dropzone.addEventListener(name, (event) => {
       event.preventDefault();
       dropzone.classList.add('dragging');
     });
-  }
+  });
 
-  for (const name of ['dragleave', 'drop']) {
+  ['dragleave', 'drop'].forEach(name => {
     dropzone.addEventListener(name, (event) => {
       event.preventDefault();
       dropzone.classList.remove('dragging');
     });
-  }
+  });
 
   dropzone.addEventListener('drop', (event) => {
     event.preventDefault();
@@ -92,14 +90,10 @@ if (dropzone) {
   });
 }
 
-// 描画ボタンのイベント登録を確実に実行
 if (loadButton) {
-  loadButton.addEventListener('click', (e) => {
-    e.preventDefault();
+  loadButton.addEventListener('click', () => {
     loadWorld();
   });
-} else {
-  console.error('HTMLに id="loadButton" がありません。');
 }
 
 $('resetView')?.addEventListener('click', resetCamera);
@@ -195,7 +189,6 @@ function int32LEFromKey(key, offset) {
     keyByte(key, offset + 2),
     keyByte(key, offset + 3)
   ]);
-
   return new DataView(b.buffer).getInt32(0, true);
 }
 
@@ -210,11 +203,12 @@ function isAir(name) {
     name === 'minecraft:void_air';
 }
 
+// 堅牢なNBTパーサの再構築
 function parseNbtCompound(bytes, state) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
   const readU8 = () => {
-    if (state.p >= bytes.length) throw new Error('NBTデータが途中で終わっています');
+    if (state.p >= bytes.length) throw new Error('NBTデータが終端に達しました');
     return bytes[state.p++];
   };
 
@@ -239,7 +233,7 @@ function parseNbtCompound(bytes, state) {
   const readI64 = () => {
     const v = view.getBigInt64(state.p, true);
     state.p += 8;
-    return v;
+    return v.toString();
   };
 
   const readF32 = () => {
@@ -257,84 +251,67 @@ function parseNbtCompound(bytes, state) {
   const readString = () => {
     const length = readU16();
     if (state.p + length > bytes.length) throw new Error('NBT文字列の長さが不正です');
-
     const s = new TextDecoder().decode(bytes.subarray(state.p, state.p + length));
     state.p += length;
     return s;
   };
 
-  const payload = (type, depth = 0) => {
-    if (depth > 40) throw new Error('NBTの階層が深すぎます');
+  const parseTagPayload = (type, depth = 0) => {
+    if (depth > 50) throw new Error('NBTの階層が深すぎます');
 
     switch (type) {
-      case 1:
-        return (readU8() << 24) >> 24;
-      case 2:
-        return readI16();
-      case 3:
-        return readI32();
-      case 4:
-        return readI64().toString();
-      case 5:
-        return readF32();
-      case 6:
-        return readF64();
+      case 1: return (readU8() << 24) >> 24;
+      case 2: return readI16();
+      case 3: return readI32();
+      case 4: return readI64();
+      case 5: return readF32();
+      case 6: return readF64();
       case 7: {
         const n = readI32();
-        if (n < 0 || n > 10000000 || state.p + n > bytes.length) {
-          throw new Error('NBT byte array length is invalid');
-        }
+        if (n < 0 || state.p + n > bytes.length) throw new Error('ByteArrayの長さが不正です');
         const a = bytes.slice(state.p, state.p + n);
         state.p += n;
         return a;
       }
-      case 8:
-        return readString();
+      case 8: return readString();
       case 9: {
         const childType = readU8();
         const n = readI32();
-        if (n < 0 || n > 1000000) throw new Error('NBT list length is invalid');
-
-        const a = [];
-        for (let i = 0; i < n; i++) a.push(payload(childType, depth + 1));
-        return a;
+        const arr = [];
+        for (let i = 0; i < n; i++) arr.push(parseTagPayload(childType, depth + 1));
+        return arr;
       }
       case 10: {
-        const o = {};
+        const obj = {};
         while (state.p < bytes.length) {
           const t = readU8();
           if (t === 0) break;
           const name = readString();
-          o[name] = payload(t, depth + 1);
+          obj[name] = parseTagPayload(t, depth + 1);
         }
-        return o;
+        return obj;
       }
       case 11: {
         const n = readI32();
-        if (n < 0 || n > 1000000) throw new Error('NBT int array length is invalid');
-
-        const a = [];
-        for (let i = 0; i < n; i++) a.push(readI32());
-        return a;
+        const arr = [];
+        for (let i = 0; i < n; i++) arr.push(readI32());
+        return arr;
       }
       case 12: {
         const n = readI32();
-        if (n < 0 || n > 1000000) throw new Error('NBT long array length is invalid');
-
-        const a = [];
-        for (let i = 0; i < n; i++) a.push(readI64().toString());
-        return a;
+        const arr = [];
+        for (let i = 0; i < n; i++) arr.push(readI64());
+        return arr;
       }
       default:
-        throw new Error(`未対応のNBTタグ: ${type}`);
+        throw new Error(`未対応のNBTタグタイプ: ${type}`);
     }
   };
 
   const rootType = readU8();
-  if (rootType !== 10) throw new Error('ブロックパレットがNBT Compoundではありません');
-
-  readString();
-  return payload(10);
+  if (rootType !== 10) throw new Error('ルートタグがCompoundではありません');
+  readString(); // ルート名
+  return parseTagPayload(10);
 }
 
 function readPalette(bytes, cursor) {
@@ -344,7 +321,7 @@ function readPalette(bytes, cursor) {
 }
 
 function parseStorage(bytes, cursor) {
-  if (cursor >= bytes.length) throw new Error('サブチャンクのストレージデータがありません');
+  if (cursor >= bytes.length) throw new Error('ストレージデータが不足しています');
 
   const header = bytes[cursor++];
   const bits = header >> 1;
@@ -353,44 +330,42 @@ function parseStorage(bytes, cursor) {
   let palette = [];
 
   if (bits === 0) {
-    const result = readPalette(bytes, cursor);
-    palette = [result.palette];
-    cursor = result.cursor;
+    const res = readPalette(bytes, cursor);
+    palette = [res.palette];
+    cursor = res.cursor;
   } else {
     const perWord = Math.floor(32 / bits);
     const wordCount = Math.ceil(4096 / perWord);
 
     if (cursor + wordCount * 4 + 4 > bytes.length) {
-      throw new Error('ブロックインデックスのデータが不足しています');
+      throw new Error('ブロックインデックスの領域が不足しています');
     }
 
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const words = new Uint32Array(wordCount);
-
     for (let i = 0; i < wordCount; i++) {
       words[i] = view.getUint32(cursor + i * 4, true);
     }
-
     cursor += wordCount * 4;
-    indices = new Uint16Array(4096);
-    const mask = (2 ** bits) - 1;
 
+    indices = new Uint16Array(4096);
+    const mask = (1 << bits) - 1;
     for (let i = 0; i < 4096; i++) {
-      const word = words[Math.floor(i / perWord)];
-      indices[i] = (word >>> ((i % perWord) * bits)) & mask;
+      const wordIdx = Math.floor(i / perWord);
+      const bitIdx = (i % perWord) * bits;
+      indices[i] = (words[wordIdx] >>> bitIdx) & mask;
     }
 
-    if (cursor + 4 > bytes.length) throw new Error('パレット数のデータが不足しています');
-
+    if (cursor + 4 > bytes.length) throw new Error('パレット数データがありません');
     const count = view.getInt32(cursor, true);
     cursor += 4;
 
-    if (count < 1 || count > 65536) throw new Error(`パレット数が不正です: ${count}`);
+    if (count < 0 || count > 65536) throw new Error(`パレット数が異常です: ${count}`);
 
     for (let i = 0; i < count; i++) {
-      const result = readPalette(bytes, cursor);
-      palette.push(result.palette);
-      cursor = result.cursor;
+      const res = readPalette(bytes, cursor);
+      palette.push(res.palette);
+      cursor = res.cursor;
     }
   }
 
@@ -415,7 +390,6 @@ function parseSubchunk(bytes, keyY) {
   if (storageCount < 1 || storageCount > 8) return null;
 
   const layers = [];
-
   for (let layer = 0; layer < storageCount; layer++) {
     const storage = parseStorage(bytes, cursor);
     layers.push(storage);
@@ -425,39 +399,37 @@ function parseSubchunk(bytes, keyY) {
   return { subY, layers };
 }
 
-function paletteName(paletteEntry) {
-  if (typeof paletteEntry === 'string') return paletteEntry;
-  return paletteEntry?.name || paletteEntry?.Name || 'unknown';
+function paletteName(entry) {
+  if (typeof entry === 'string') return entry;
+  return entry?.name || entry?.Name || 'unknown';
 }
 
 function blockColor(name) {
   const n = (name || '').replace('minecraft:', '');
 
-  if (n.includes('water') || n.includes('bubble_column')) return 0x5a9fe8;
+  if (n.includes('water')) return 0x5a9fe8;
   if (n.includes('lava') || n.includes('magma')) return 0xe77935;
-  if (n.includes('grass') || n.includes('leaves') || n.includes('moss') || n.includes('fern') || n.includes('vine')) {
+  if (n.includes('grass') || n.includes('leaves') || n.includes('moss') || n.includes('fern')) {
     return n.includes('leaves') ? 0x4e9a53 : 0x70ad59;
   }
-  if (n.includes('dirt') || n.includes('mud') || n.includes('farmland') || n.includes('podzol')) return 0x8b6548;
-  if (n.includes('sand') || n.includes('sandstone') || n.includes('end_stone')) return 0xd9c58b;
-  if (n.includes('snow') || n.includes('quartz') || n.includes('calcite') || n.includes('diorite')) return 0xe5e9e8;
-  if (n.includes('stone') || n.includes('deepslate') || n.includes('andesite') || n.includes('granite') || n.includes('tuff')) return 0x858b90;
-  if (n.includes('log') || n.includes('wood') || n.includes('planks') || n.includes('stem') || n.includes('hyphae')) return 0x9b7049;
-  if (n.includes('brick') || n.includes('terracotta') || n.includes('copper')) return 0xb96e54;
+  if (n.includes('dirt') || n.includes('mud') || n.includes('farmland')) return 0x8b6548;
+  if (n.includes('sand') || n.includes('sandstone')) return 0xd9c58b;
+  if (n.includes('snow') || n.includes('quartz') || n.includes('calcite')) return 0xe5e9e8;
+  if (n.includes('stone') || n.includes('deepslate') || n.includes('andesite') || n.includes('granite')) return 0x858b90;
+  if (n.includes('log') || n.includes('wood') || n.includes('planks') || n.includes('stem')) return 0x9b7049;
+  if (n.includes('brick') || n.includes('terracotta')) return 0xb96e54;
   if (n.includes('glass')) return 0x9bd8d9;
-  if (n.includes('wool') || n.includes('concrete') || n.includes('shulker')) return 0xb3a5d8;
-  if (n.includes('iron') || n.includes('chain') || n.includes('metal')) return 0xb8c1c7;
+  if (n.includes('iron') || n.includes('metal')) return 0xb8c1c7;
   if (n.includes('gold')) return 0xe3bf4f;
-  if (n.includes('diamond') || n.includes('prismarine')) return 0x59c5ad;
-  if (n.includes('coal') || n.includes('obsidian') || n.includes('blackstone')) return 0x45434f;
-  if (n.includes('flower') || n.includes('tulip') || n.includes('rose') || n.includes('torchflower')) return 0xd88bb5;
+  if (n.includes('obsidian') || n.includes('coal')) return 0x45434f;
+  if (n.includes('flower') || n.includes('rose')) return 0xd88bb5;
 
   return 0x9da8a0;
 }
 
 function isTransparentLike(name) {
   return isAir(name) ||
-    /water|lava|glass|leaves|flower|tallgrass|short_grass|fern|vine|torch|rail|ladder|seagrass|kelp|fire|snow_layer|carpet|button|pressure_plate/.test(name || '');
+    /water|lava|glass|leaves|flower|tallgrass|short_grass|fern|vine|torch|rail|ladder|fire|snow_layer|carpet|button|plate/.test(name || '');
 }
 
 function blockKey(x, y, z) {
@@ -469,17 +441,15 @@ async function loadWorld() {
     if (fileInput && fileInput.files && fileInput.files[0]) {
       selectedFile = fileInput.files[0];
     } else {
-      setStatus('先に .mcworld または .zip ファイルを選択してください。', 'error');
+      setStatus('先に .mcworld ファイルを選択してください。', 'error');
       return;
     }
   }
 
-  if (!loadButton) return;
-
   loadButton.disabled = true;
   $('emptyState')?.classList.add('hidden');
 
-  setLoading(true, 'ワールドを解析中…', 'LevelDBとチャンクデータを読み込んでいます。大きなワールドでは時間がかかります。');
+  setLoading(true, 'ワールドを解析中…', 'LevelDBからデータを読み込んでいます。');
   setStatus('LevelDBを読み込んでいます…');
 
   if ($('chunkCount'))$('chunkCount').textContent = '…';
@@ -494,33 +464,29 @@ async function loadWorld() {
     );
 
     const entries = await readMcworld(selectedFile);
+    if (!(entries instanceof Map)) throw new Error('LevelDBの読み込み結果が不正です');
 
-    if (!(entries instanceof Map)) throw new Error('LevelDBの読み込み結果が想定と異なります');
-
-    setLoading(true, 'チャンクを解析中…', `${entries.size.toLocaleString()} 個のLevelDBキーを確認しました。`);
-    setStatus(`${entries.size.toLocaleString()} 個のLevelDBキーを取得。サブチャンクを探しています…`);
+    setLoading(true, 'サブチャンクを解析中…', `${entries.size.toLocaleString()} 個のキーをスキャン中…`);
+    setStatus(`${entries.size.toLocaleString()} 個のキーを取得。サブチャンクを抽出しています…`);
 
     const subs = [];
-
     for (const [key, entry] of entries) {
-      const length = key.length;
-
-      if ((length !== 10 && length !== 14) || keyByte(key, length - 2) !== 0x2f) continue;
+      const len = key.length;
+      if ((len !== 10 && len !== 14) || keyByte(key, len - 2) !== 0x2f) continue;
 
       const x = int32LEFromKey(key, 0);
       const z = int32LEFromKey(key, 4);
-      const dimension = length === 14 ? int32LEFromKey(key, 8) : 0;
-      const y = signedByte(keyByte(key, length - 1));
+      const dim = len === 14 ? int32LEFromKey(key, 8) : 0;
+      const y = signedByte(keyByte(key, len - 1));
 
-      if (dimension !== 0) continue;
-
+      if (dim !== 0) continue;
       if (entry?.value instanceof Uint8Array) {
-        subs.push({ key, x, z, y, bytes: entry.value });
+        subs.push({ x, z, y, bytes: entry.value });
       }
     }
 
     if (!subs.length) {
-      throw new Error('サブチャンクが見つかりません。対応するBedrock .mcworldか確認してください。');
+      throw new Error('有効なサブチャンクが見つかりませんでした。');
     }
 
     const blockMap = new Map();
@@ -528,16 +494,13 @@ async function loadWorld() {
     let unsupported = 0;
     let totalBlocksFound = 0;
 
-    const yieldedEvery = 25;
-
     for (let si = 0; si < subs.length; si++) {
       const sub = subs[si];
       let parsed;
 
       try {
         parsed = parseSubchunk(sub.bytes, sub.y);
-      } catch (error) {
-        console.warn('Subchunk parse failed:', sub.key, error);
+      } catch (e) {
         continue;
       }
 
@@ -547,7 +510,6 @@ async function loadWorld() {
       }
 
       parsedCount++;
-
       const solid = parsed.layers[0];
       const fluid = parsed.layers[1];
 
@@ -558,12 +520,11 @@ async function loadWorld() {
 
         const nameAt = (layer) => {
           if (!layer) return '';
-          const paletteIndex = layer.indices ? layer.indices[i] : 0;
-          return paletteName(layer.palette[paletteIndex]);
+          const idx = layer.indices ? layer.indices[i] : 0;
+          return paletteName(layer.palette[idx]);
         };
 
         let name = nameAt(solid);
-
         if (isAir(name)) {
           const fluidName = nameAt(fluid);
           if (!isAir(fluidName)) name = fluidName;
@@ -575,27 +536,25 @@ async function loadWorld() {
         const wy = parsed.subY * 16 + iy;
         const wz = sub.z * 16 + iz;
 
-        const hash = blockKey(wx, wy, wz);
-        blockMap.set(hash, { x: wx, y: wy, z: wz, name });
+        blockMap.set(blockKey(wx, wy, wz), { x: wx, y: wy, z: wz, name });
         totalBlocksFound++;
       }
 
-      if (si % yieldedEvery === 0) {
-        if ($('loadingText')) {$('loadingText').textContent =
-            `サブチャンク ${si + 1} / ${subs.length} · ブロック ${totalBlocksFound.toLocaleString()}`;
+      if (si % 30 === 0) {
+        if ($('loadingText')) {$('loadingText').textContent = `サブチャンク処理中: ${si + 1} / ${subs.length} · ブロック ${totalBlocksFound.toLocaleString()}`;
         }
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await new Promise(r => setTimeout(r, 0));
       }
     }
 
     if (!blockMap.size) {
-      throw new Error('ブロックを復元できませんでした。旧形式のワールドか、未対応のチャンク形式の可能性があります。');
+      throw new Error('ブロックデータを復元できませんでした。');
     }
 
-    setLoading(true, '3Dモデルを作成中…', `${totalBlocksFound.toLocaleString()} 個のブロックを確認しました。表面を最適化中…`);
-    await new Promise(resolve => setTimeout(resolve, 0));
+    setLoading(true, '3Dモデルを描画中…', `${totalBlocksFound.toLocaleString()} 個のブロック表面を最適化しています。`);
+    await new Promise(r => setTimeout(r, 0));
 
-    const renderedCount = await renderBlocksOptimized(blockMap);
+    const renderedCount = await renderBlocks(blockMap);
 
     if ($('chunkCount'))$('chunkCount').textContent = parsedCount.toLocaleString();
     if ($('blockCount'))$('blockCount').textContent = totalBlocksFound.toLocaleString();
@@ -604,68 +563,49 @@ async function loadWorld() {
     if ($('viewerHint'))$('viewerHint').textContent = `${selectedFile.name} · Overworld`;
     if ($('dimensionLabel'))$('dimensionLabel').textContent = 'Overworld';
 
-    const warnings = [];
-    if (unsupported) warnings.push(`${unsupported} 個の旧形式サブチャンクは未対応です`);
-
-    setStatus(
-      `読み込み完了。${warnings.length ? warnings.join('。') + '。' : 'マウスや指で回転・ズームできます。'}`,
-      'success'
-    );
-
+    setStatus('読み込みが完了しました。マウスや指で視点を操作できます。', 'success');
     setLoading(false);
   } catch (error) {
     console.error(error);
     setLoading(false);
     $('emptyState')?.classList.remove('hidden');
-    setStatus(`読み込みエラー: ${error?.message || error}`, 'error');
+    setStatus(`エラー: ${error?.message || error}`, 'error');
   } finally {
     loadButton.disabled = !selectedFile;
   }
 }
 
-async function renderBlocksOptimized(blockMap) {
+async function renderBlocks(blockMap) {
   while (worldGroup.children.length) {
     const child = worldGroup.children[0];
     worldGroup.remove(child);
-
     child.geometry?.dispose();
-
     if (Array.isArray(child.material)) {
-      child.material.forEach(material => material.dispose());
+      child.material.forEach(m => m.dispose());
     } else {
       child.material?.dispose();
     }
   }
 
-  if (!blockMap.size) throw new Error('描画できるブロックがありません。');
-
   const neighbors = [
-    [1, 0, 0],
-    [-1, 0, 0],
-    [0, 1, 0],
-    [0, -1, 0],
-    [0, 0, 1],
-    [0, 0, -1]
+    [1, 0, 0], [-1, 0, 0],
+    [0, 1, 0], [0, -1, 0],
+    [0, 0, 1], [0, 0, -1]
   ];
 
-  let minX = Infinity;
-  let minY = Infinity;
-  let minZ = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  let maxZ = -Infinity;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
 
-  for (const block of blockMap.values()) {
-    if (block.x < minX) minX = block.x;
-    if (block.y < minY) minY = block.y;
-    if (block.z < minZ) minZ = block.z;
-    if (block.x > maxX) maxX = block.x;
-    if (block.y > maxY) maxY = block.y;
-    if (block.z > maxZ) maxZ = block.z;
+  for (const b of blockMap.values()) {
+    if (b.x < minX) minX = b.x;
+    if (b.y < minY) minY = b.y;
+    if (b.z < minZ) minZ = b.z;
+    if (b.x > maxX) maxX = b.x;
+    if (b.y > maxY) maxY = b.y;
+    if (b.z > maxZ) maxZ = b.z;
   }
 
   const geometry = new THREE.BoxGeometry(0.985, 0.985, 0.985);
-
   const material = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     roughness: 0.92,
@@ -673,14 +613,12 @@ async function renderBlocksOptimized(blockMap) {
   });
 
   const BATCH_SIZE = 16000;
-
   let batch = [];
   let renderedCount = 0;
   let processedCount = 0;
 
-  function createBatch(items) {
+  function flushBatch(items) {
     if (!items.length) return;
-
     const mesh = new THREE.InstancedMesh(geometry, material, items.length);
     mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
 
@@ -688,13 +626,11 @@ async function renderBlocksOptimized(blockMap) {
     const color = new THREE.Color();
 
     for (let i = 0; i < items.length; i++) {
-      const block = items[i];
-
-      dummy.position.set(block.x, block.y, block.z);
+      const b = items[i];
+      dummy.position.set(b.x, b.y, b.z);
       dummy.updateMatrix();
-
       mesh.setMatrixAt(i, dummy.matrix);
-      color.setHex(blockColor(block.name));
+      color.setHex(blockColor(b.name));
       mesh.setColorAt(i, color);
     }
 
@@ -705,41 +641,34 @@ async function renderBlocksOptimized(blockMap) {
     renderedCount += items.length;
   }
 
-  for (const block of blockMap.values()) {
+  for (const b of blockMap.values()) {
     let visible = false;
-
     for (let i = 0; i < 6; i++) {
       const [dx, dy, dz] = neighbors[i];
-      const nHash = blockKey(block.x + dx, block.y + dy, block.z + dz);
-      const neighbor = blockMap.get(nHash);
-
-      if (!neighbor || isTransparentLike(neighbor.name)) {
+      if (!blockMap.has(blockKey(b.x + dx, b.y + dy, b.z + dz))) {
         visible = true;
         break;
       }
     }
 
-    if (visible) batch.push(block);
+    if (visible) batch.push(b);
     processedCount++;
 
     if (batch.length >= BATCH_SIZE) {
-      createBatch(batch);
+      flushBatch(batch);
       batch = [];
-
-      if ($('loadingText')) {$('loadingText').textContent =
-          `表面を描画中… ${processedCount.toLocaleString()} / ${blockMap.size.toLocaleString()} ブロック · 描画済み ${renderedCount.toLocaleString()}`;
+      if ($('loadingText')) {$('loadingText').textContent = `描画中… ${processedCount.toLocaleString()} / ${blockMap.size.toLocaleString()}`;
       }
-
-      await new Promise(resolve => requestAnimationFrame(resolve));
+      await new Promise(r => requestAnimationFrame(r));
     }
   }
 
-  if (batch.length) createBatch(batch);
+  if (batch.length) flushBatch(batch);
 
   if (!renderedCount) {
     geometry.dispose();
     material.dispose();
-    throw new Error('描画できるブロックがありません。');
+    throw new Error('描画対象のブロックが見つかりませんでした。');
   }
 
   const center = new THREE.Vector3(
@@ -747,16 +676,9 @@ async function renderBlocksOptimized(blockMap) {
     (minY + maxY) / 2,
     (minZ + maxZ) / 2
   );
-
   worldGroup.position.set(-center.x, -center.y, -center.z);
 
-  const size = Math.max(
-    maxX - minX + 1,
-    maxY - minY + 1,
-    maxZ - minZ + 1,
-    20
-  );
-
+  const size = Math.max(maxX - minX + 1, maxY - minY + 1, maxZ - minZ + 1, 20);
   const distance = size * 1.2 + 25;
 
   camera.position.set(distance, distance * 0.78, distance);
@@ -775,6 +697,5 @@ async function renderBlocksOptimized(blockMap) {
   };
 
   $('emptyState')?.classList.add('hidden');
-
   return renderedCount;
 }
