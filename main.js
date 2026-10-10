@@ -1,4 +1,3 @@
-
 import * as THREE from 'https://esm.sh/three@0.180.0';
 import { OrbitControls } from 'https://esm.sh/three@0.180.0/examples/jsm/controls/OrbitControls.js';
 import { readMcworld } from 'https://esm.sh/mcbe-leveldb-reader@5.0.1';
@@ -12,23 +11,25 @@ const statusBox = $('status');
 const loading = $('loading');
 
 let selectedFile = null;
-let isLoading = false;
 let scene, camera, renderer, controls, worldGroup, resizeObserver;
 let initialCamera = null;
-let coordinateReadout = null;
+const MAX_SUBCHUNKS = 3500;
+const RENDER_BATCH_SIZE = 12000;
+let loadGeneration = 0;
+let sharedGeometry = null;
+let sharedMaterial = null;
 let raycaster = null;
 let pointerNdc = null;
+let coordinateReadout = null;
+let coordinateFramePending = false;
+let loadInProgress = false;
 
 function setStatus(message, type = '') {
   statusBox.textContent = message;
   statusBox.className = `status ${type}`.trim();
 }
 
-function setLoading(
-  show,
-  title = '読み込み中…',
-  message = 'ワールドのデータを確認しています。'
-) {
+function setLoading(show, title = '読み込み中…', message = 'ワールドのデータを確認しています。') {
   loading.classList.toggle('hidden', !show);
   $('loadingTitle').textContent = title;
   $('loadingText').textContent = message;
@@ -38,24 +39,15 @@ function chooseFile(file) {
   if (!file) return;
 
   if (!file.name.toLowerCase().endsWith('.mcworld')) {
-    selectedFile = null;
-    $('fileName').textContent =
-      `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
-    loadButton.disabled = true;
-    fileInput.value = '';
-    setStatus(
-      '拡張子が .mcworld のファイルを選択してください。',
-      'error'
-    );
+    setStatus('拡張子が .mcworld のファイルを選択してください。', 'error');
     return;
   }
 
   selectedFile = file;
-
   $('fileName').textContent =
     `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
 
-  loadButton.disabled = isLoading;
+  loadButton.disabled = false;
   setStatus('ファイルを選択しました。3D表示を開始できます。');
 }
 
@@ -88,7 +80,23 @@ dropzone.addEventListener('drop', (event) => {
   chooseFile(event.dataTransfer?.files?.[0]);
 });
 
-loadButton.addEventListener('click', loadWorld);
+/*
+ * ボタンの処理を直接設定。
+ * HTML側のクリックイベント設定に依存しないようにする。
+ */
+loadButton.onclick = (event) => {
+  event.preventDefault();
+
+  if (loadInProgress) return;
+
+  if (!selectedFile) {
+    setStatus('先に.mcworldファイルを選択してください。', 'error');
+    return;
+  }
+
+  void loadWorld();
+};
+
 $('resetView').addEventListener('click', resetCamera);
 
 $('fullscreen').addEventListener('click', () => {
@@ -105,6 +113,9 @@ function initScene() {
   if (renderer) return;
 
   scene = new THREE.Scene();
+  raycaster = new THREE.Raycaster();
+  pointerNdc = new THREE.Vector2();
+
   scene.background = new THREE.Color('#f7faf9');
 
   camera = new THREE.PerspectiveCamera(48, 1, 0.1, 10000);
@@ -115,56 +126,35 @@ function initScene() {
     alpha: false
   });
 
-  renderer.setPixelRatio(
-    Math.min(window.devicePixelRatio || 1, 1.8)
-  );
-
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
   renderer.setSize(viewport.clientWidth, viewport.clientHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   viewport.appendChild(renderer.domElement);
 
   coordinateReadout = document.createElement('div');
-  coordinateReadout.textContent =
-    '座標: ブロックにカーソルを合わせる';
+  coordinateReadout.textContent = '座標：ブロックにカーソルを合わせる';
 
   Object.assign(coordinateReadout.style, {
     position: 'absolute',
     left: '12px',
     bottom: '12px',
-    zIndex: '5',
+    zIndex: '2',
     padding: '7px 10px',
+    border: '1px solid #dce5df',
     borderRadius: '8px',
-    background: 'rgba(255,255,255,0.92)',
-    color: '#25312c',
-    border: '1px solid rgba(30,50,40,0.14)',
-    font: '12px/1.4 system-ui, sans-serif',
+    background: 'rgba(255,255,255,.92)',
+    color: '#334155',
+    font: '11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace',
     pointerEvents: 'none',
-    maxWidth: 'calc(100% - 24px)',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap'
+    maxWidth: 'calc(100% - 24px)'
   });
-
-  if (getComputedStyle(viewport).position === 'static') {
-    viewport.style.position = 'relative';
-  }
 
   viewport.appendChild(coordinateReadout);
 
-  raycaster = new THREE.Raycaster();
-  raycaster.params.Mesh.threshold = 0.1;
-  pointerNdc = new THREE.Vector2();
-
   renderer.domElement.addEventListener(
     'pointermove',
-    updateHoveredCoordinate,
-    { passive: true }
-  );
-
-  renderer.domElement.addEventListener(
-    'pointerup',
-    updateHoveredCoordinate,
+    updateCoordinateReadout,
     { passive: true }
   );
 
@@ -172,8 +162,7 @@ function initScene() {
     'pointerleave',
     () => {
       if (coordinateReadout) {
-        coordinateReadout.textContent =
-          '座標: ブロックにカーソルを合わせる';
+        coordinateReadout.textContent = '座標：ブロックにカーソルを合わせる';
       }
     },
     { passive: true }
@@ -204,6 +193,53 @@ function initScene() {
   });
 }
 
+function updateCoordinateReadout(event) {
+  if (
+    !renderer ||
+    !camera ||
+    !worldGroup ||
+    !coordinateReadout ||
+    coordinateFramePending
+  ) {
+    return;
+  }
+
+  const rect = renderer.domElement.getBoundingClientRect();
+
+  if (!rect.width || !rect.height) return;
+
+  pointerNdc.set(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1
+  );
+
+  coordinateFramePending = true;
+
+  requestAnimationFrame(() => {
+    coordinateFramePending = false;
+
+    if (!raycaster || !worldGroup || !worldGroup.children.length) return;
+
+    raycaster.setFromCamera(pointerNdc, camera);
+
+    const hits = raycaster.intersectObjects(worldGroup.children, false);
+    const hit = hits.find(item => Number.isInteger(item.instanceId));
+
+    if (!hit) {
+      coordinateReadout.textContent = '座標：ブロックにカーソルを合わせる';
+      return;
+    }
+
+    const matrix = new THREE.Matrix4();
+    hit.object.getMatrixAt(hit.instanceId, matrix);
+
+    const pos = new THREE.Vector3().setFromMatrixPosition(matrix);
+
+    coordinateReadout.textContent =
+      `座標  X: ${Math.round(pos.x)}  Y: ${Math.round(pos.y)}  Z: ${Math.round(pos.z)}`;
+  });
+}
+
 function resizeRenderer() {
   if (!renderer || !camera) return;
 
@@ -212,7 +248,6 @@ function resizeRenderer() {
 
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
-
   renderer.setSize(w, h);
 }
 
@@ -222,58 +257,6 @@ function resetCamera() {
   camera.position.copy(initialCamera.position);
   controls.target.copy(initialCamera.target);
   controls.update();
-}
-
-function updateHoveredCoordinate(event) {
-  if (
-    !renderer ||
-    !camera ||
-    !worldGroup ||
-    !raycaster ||
-    !pointerNdc ||
-    !coordinateReadout ||
-    !worldGroup.children.length
-  ) {
-    return;
-  }
-
-  const rect = renderer.domElement.getBoundingClientRect();
-
-  if (!rect.width || !rect.height) return;
-
-  pointerNdc.x =
-    ((event.clientX - rect.left) / rect.width) * 2 - 1;
-
-  pointerNdc.y =
-    -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-  raycaster.setFromCamera(pointerNdc, camera);
-
-  const hits = raycaster.intersectObjects(
-    worldGroup.children,
-    false
-  );
-
-  const hit = hits.find(
-    item => item.instanceId !== undefined
-  );
-
-  if (!hit) {
-    coordinateReadout.textContent =
-      '座標: ブロックにカーソルを合わせる';
-    return;
-  }
-
-  const matrix = new THREE.Matrix4();
-  hit.object.getMatrixAt(hit.instanceId, matrix);
-
-  const position = new THREE.Vector3()
-    .setFromMatrixPosition(matrix);
-
-  coordinateReadout.textContent =
-    `座標 X ${Math.round(position.x)} · ` +
-    `Y ${Math.round(position.y)} · ` +
-    `Z ${Math.round(position.z)}`;
 }
 
 function keyByte(key, index) {
@@ -296,12 +279,15 @@ function signedByte(n) {
 }
 
 function isAir(name) {
-  return !name ||
+  return (
+    !name ||
     name === 'minecraft:air' ||
     name === 'minecraft:cave_air' ||
-    name === 'minecraft:void_air';
+    name === 'minecraft:void_air'
+  );
 }
 
+// Bedrock persistent block palettes use little-endian NBT compounds.
 function parseNbtCompound(bytes, state) {
   const view = new DataView(
     bytes.buffer,
@@ -313,7 +299,6 @@ function parseNbtCompound(bytes, state) {
     if (state.p >= bytes.length) {
       throw new Error('NBTデータが途中で終わっています');
     }
-
     return bytes[state.p++];
   };
 
@@ -541,7 +526,6 @@ function parseStorage(bytes, cursor) {
 
     for (let i = 0; i < 4096; i++) {
       const word = words[Math.floor(i / perWord)];
-
       indices[i] =
         (word >>> ((i % perWord) * bits)) & mask;
     }
@@ -607,9 +591,7 @@ function parseSubchunk(bytes, keyY) {
 }
 
 function paletteName(paletteEntry) {
-  if (typeof paletteEntry === 'string') {
-    return paletteEntry;
-  }
+  if (typeof paletteEntry === 'string') return paletteEntry;
 
   return paletteEntry?.name ||
     paletteEntry?.Name ||
@@ -734,77 +716,22 @@ function blockColor(name) {
 }
 
 function isTransparentLike(name) {
-  return isAir(name) ||
-    /water|lava|glass|leaves|flower|tallgrass|short_grass|fern|vine|torch|rail|ladder|seagrass|kelp|fire|snow_layer|carpet|button|pressure_plate/.test(name || '');
-}
-
-let sharedCubeGeometry = null;
-let sharedCubeMaterial = null;
-
-const BATCH_SIZE = 12000;
-const YIELD_EVERY_SUBCHUNKS = 12;
-
-function chunkKey(x, y, z) {
-  return `${x},${y},${z}`;
-}
-
-function localIndex(x, y, z) {
-  return x * 256 + z * 16 + y;
-}
-
-function packBlock(name) {
-  if (isAir(name)) return 0;
-
   return (
-    blockColor(name) |
-    (isTransparentLike(name) ? 0x80000000 : 0)
-  ) >>> 0;
-}
-
-function packedPalette(layer) {
-  if (!layer) return null;
-
-  return layer.palette.map((entry) =>
-    packBlock(paletteName(entry))
+    isAir(name) ||
+    /water|lava|glass|leaves|flower|tallgrass|short_grass|fern|vine|torch|rail|ladder|seagrass|kelp|fire|snow_layer|carpet|button|pressure_plate/.test(name || '')
   );
 }
 
-function clearWorldMeshes() {
-  if (!worldGroup) return;
-
-  for (const child of worldGroup.children) {
-    if (child.isInstancedMesh) {
-      child.dispose?.();
-    }
-  }
-
-  worldGroup.clear();
-}
-
-function createSharedGeometry() {
-  if (!sharedCubeGeometry) {
-    sharedCubeGeometry = new THREE.BoxGeometry(
-      0.985,
-      0.985,
-      0.985
-    );
-  }
-
-  if (!sharedCubeMaterial) {
-    sharedCubeMaterial = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      roughness: 0.92,
-      metalness: 0.0
-    });
-  }
-}
-
 async function loadWorld() {
-  if (!selectedFile || isLoading) return;
+  if (!selectedFile || loadInProgress) return;
 
-  const fileToLoad = selectedFile;
-  isLoading = true;
+  loadInProgress = true;
+
+  const generation = ++loadGeneration;
+
   loadButton.disabled = true;
+  loadButton.textContent = '読み込み中…';
+
   $('emptyState').classList.add('hidden');
 
   setLoading(
@@ -821,9 +748,11 @@ async function loadWorld() {
 
   try {
     initScene();
-    clearWorldMeshes();
+    clearWorld();
 
-    const entries = await readMcworld(fileToLoad);
+    const entries = await readMcworld(selectedFile);
+
+    if (generation !== loadGeneration) return;
 
     if (!(entries instanceof Map)) {
       throw new Error('LevelDBの読み込み結果が想定と異なります');
@@ -836,24 +765,8 @@ async function loadWorld() {
     );
 
     setStatus(
-      `${entries.size.toLocaleString()} 個のLevelDBキーを取得。サブチャンクを解析しています…`
+      `${entries.size.toLocaleString()} 個のLevelDBキーを取得。サブチャンクを探しています…`
     );
-
-    const chunks = new Map();
-
-    let parsedCount = 0;
-    let blockCount = 0;
-    let unsupported = 0;
-
-    let minX = Infinity;
-    let minY = Infinity;
-    let minZ = Infinity;
-
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    let maxZ = -Infinity;
-
-    let processedSubchunks = 0;
 
     const subs = [];
 
@@ -867,33 +780,27 @@ async function loadWorld() {
         continue;
       }
 
-      const cx = int32LEFromKey(key, 0);
-      const cz = int32LEFromKey(key, 4);
-
+      const x = int32LEFromKey(key, 0);
+      const z = int32LEFromKey(key, 4);
       const dimension = length === 14
         ? int32LEFromKey(key, 8)
         : 0;
 
-      const keyY = signedByte(keyByte(key, length - 1));
+      const y = signedByte(keyByte(key, length - 1));
 
-      if (
-        dimension !== 0 ||
-        !(entry?.value instanceof Uint8Array)
-      ) {
-        continue;
+      if (dimension !== 0) continue;
+
+      if (entry?.value instanceof Uint8Array) {
+        subs.push({
+          key,
+          x,
+          z,
+          y,
+          bytes: entry.value
+        });
       }
 
-      subs.push({
-        key,
-        cx,
-        cz,
-        keyY,
-        bytes: entry.value
-      });
-    }
-
-    if (typeof entries.clear === 'function') {
-      entries.clear();
+      if (subs.length >= MAX_SUBCHUNKS) break;
     }
 
     if (!subs.length) {
@@ -902,17 +809,25 @@ async function loadWorld() {
       );
     }
 
-    for (const sub of subs) {
-      const { key, cx, cz, keyY, bytes } = sub;
+    const voxelChunks = new Map();
 
-      processedSubchunks++;
+    let parsedCount = 0;
+    let unsupported = 0;
+    let blockCount = 0;
+
+    const yieldedEvery = 24;
+
+    for (let si = 0; si < subs.length; si++) {
+      if (generation !== loadGeneration) return;
+
+      const sub = subs[si];
 
       let parsed;
 
       try {
-        parsed = parseSubchunk(bytes, keyY);
+        parsed = parseSubchunk(sub.bytes, sub.y);
       } catch (error) {
-        console.warn('Subchunk parse failed:', key, error);
+        console.warn('Subchunk parse failed:', sub.key, error);
         continue;
       }
 
@@ -921,79 +836,89 @@ async function loadWorld() {
         continue;
       }
 
+      parsedCount++;
+
       const solid = parsed.layers[0];
       const fluid = parsed.layers[1];
 
-      const solidPalette = packedPalette(solid);
-      const fluidPalette = packedPalette(fluid);
+      const colors = new Uint32Array(4096);
+      const flags = new Uint8Array(4096);
 
-      const voxels = new Uint32Array(4096);
-      let chunkBlocks = 0;
+      const colorCache = new Map();
+      const transparentCache = new Map();
+
+      let subchunkBlockCount = 0;
 
       for (let i = 0; i < 4096; i++) {
-        const solidIndex = solid?.indices
-          ? solid.indices[i]
-          : 0;
+        const nameAt = (layer) => {
+          if (!layer) return '';
 
-        let packed = solidPalette?.[solidIndex] || 0;
-
-        if (!packed && fluidPalette) {
-          const fluidIndex = fluid?.indices
-            ? fluid.indices[i]
+          const paletteIndex = layer.indices
+            ? layer.indices[i]
             : 0;
 
-          packed = fluidPalette[fluidIndex] || 0;
+          return paletteName(layer.palette[paletteIndex]);
+        };
+
+        let name = nameAt(solid);
+
+        if (isAir(name)) {
+          const fluidName = nameAt(fluid);
+
+          if (!isAir(fluidName)) {
+            name = fluidName;
+          }
         }
 
-        if (!packed) continue;
+        if (isAir(name)) continue;
 
-        voxels[i] = packed;
-        chunkBlocks++;
+        let color = colorCache.get(name);
+
+        if (color === undefined) {
+          color = blockColor(name);
+          colorCache.set(name, color);
+        }
+
+        let transparent = transparentCache.get(name);
+
+        if (transparent === undefined) {
+          transparent = isTransparentLike(name);
+          transparentCache.set(name, transparent);
+        }
+
+        colors[i] = color;
+        flags[i] = 1 | (transparent ? 2 : 0);
+
         blockCount++;
-
-        const lx = Math.floor(i / 256);
-        const lz = Math.floor(i / 16) % 16;
-        const ly = i % 16;
-
-        const wx = cx * 16 + lx;
-        const wy = parsed.subY * 16 + ly;
-        const wz = cz * 16 + lz;
-
-        if (wx < minX) minX = wx;
-        if (wy < minY) minY = wy;
-        if (wz < minZ) minZ = wz;
-
-        if (wx > maxX) maxX = wx;
-        if (wy > maxY) maxY = wy;
-        if (wz > maxZ) maxZ = wz;
+        subchunkBlockCount++;
       }
 
-      if (chunkBlocks) {
-        chunks.set(
-          chunkKey(cx, parsed.subY, cz),
+      if (subchunkBlockCount) {
+        voxelChunks.set(
+          `${sub.x},${parsed.subY},${sub.z}`,
           {
-            cx,
-            cy: parsed.subY,
-            cz,
-            voxels
+            cx: sub.x,
+            sy: parsed.subY,
+            cz: sub.z,
+            colors,
+            flags
           }
         );
-
-        parsedCount++;
       }
 
-      if (processedSubchunks % YIELD_EVERY_SUBCHUNKS === 0) {
+      if (si % yieldedEvery === 0) {
         $('loadingText').textContent =
-          `サブチャンク ${processedSubchunks.toLocaleString()} · ` +
-          `ブロック ${blockCount.toLocaleString()} · メモリ節約モード`;
+          `サブチャンク ${si + 1} / ${subs.length} · ブロック ${blockCount.toLocaleString()}`;
+
+        setStatus(`サブチャンクを解析中… ${si + 1} / ${subs.length}`);
 
         await new Promise(resolve => setTimeout(resolve, 0));
       }
     }
 
-    subs.length = 0;
+    if (generation !== loadGeneration) return;
 
-    if (!blockCount || !chunks.size) {
+    if (!blockCount || !voxelChunks.size) {
       throw new Error(
         'ブロックを復元できませんでした。旧形式のワールドか、未対応のチャンク形式の可能性があります。'
       );
@@ -1002,129 +927,115 @@ async function loadWorld() {
     setLoading(
       true,
       '3Dモデルを作成中…',
-      `${blockCount.toLocaleString()} 個のブロックをコンパクト形式で保持しています。表面を抽出しています。`
+      `${blockCount.toLocaleString()} 個のブロックを軽量データから描画しています。`
     );
 
     await new Promise(resolve => setTimeout(resolve, 0));
 
-    const renderedCount = await renderCompactChunks(chunks, {
-      minX,
-      minY,
-      minZ,
-      maxX,
-      maxY,
-      maxZ
-    });
+    const renderedCount = await renderVoxelChunks(
+      voxelChunks,
+      generation
+    );
+
+    if (generation !== loadGeneration) return;
 
     $('chunkCount').textContent = parsedCount.toLocaleString();
     $('blockCount').textContent = blockCount.toLocaleString();
     $('renderCount').textContent = renderedCount.toLocaleString();
 
-    $('viewerHint').textContent =
-      `${fileToLoad.name} · Overworld`;
-
+    $('viewerHint').textContent = `${selectedFile.name} · Overworld`;
     $('dimensionLabel').textContent = 'Overworld';
 
     const warnings = [];
 
-    if (unsupported) {
+    if (subs.length >= MAX_SUBCHUNKS) {
       warnings.push(
-        `${unsupported} 個の未対応形式サブチャンクをスキップしました`
+        `処理上限 ${MAX_SUBCHUNKS.toLocaleString()} サブチャンクに到達しました`
       );
     }
 
-    const anotherFileSelected =
-      selectedFile && selectedFile !== fileToLoad;
-    const completionMessage = anotherFileSelected
-      ? `${fileToLoad.name} の読み込み完了。現在表示中です。` +
-        `${selectedFile.name} は選択中です。「3D描画」で読み込めます。`
-      : `読み込み完了。${
-          warnings.length
-            ? warnings.join('。') + '。'
-            : 'マウスや指で回転・ズームできます。'
-        }`;
+    if (unsupported) {
+      warnings.push(`${unsupported} 個の旧形式サブチャンクは未対応です`);
+    }
 
-    setStatus(completionMessage, 'success');
+    setStatus(
+      `読み込み完了。${warnings.length
+        ? warnings.join('。') + '。'
+        : 'マウスや指で回転・ズームできます。'}`,
+      'success'
+    );
 
     setLoading(false);
   } catch (error) {
     console.error(error);
 
+    if (generation !== loadGeneration) return;
+
     setLoading(false);
     $('emptyState').classList.remove('hidden');
 
     setStatus(
-      `${fileToLoad.name} の読み込みエラー: ${error?.message || error}`,
+      `読み込みエラー: ${error?.message || error}`,
       'error'
     );
   } finally {
-    isLoading = false;
-    loadButton.disabled = !selectedFile;
+    if (generation === loadGeneration) {
+      loadInProgress = false;
+      loadButton.disabled = !selectedFile;
+      loadButton.textContent = '3D表示を開始';
+    }
   }
 }
 
-function getVoxel(chunks, chunk, lx, ly, lz) {
-  if (
-    lx >= 0 && lx < 16 &&
-    ly >= 0 && ly < 16 &&
-    lz >= 0 && lz < 16
-  ) {
-    return chunk.voxels[localIndex(lx, ly, lz)];
+function clearWorld() {
+  if (!worldGroup) return;
+
+  while (worldGroup.children.length) {
+    worldGroup.remove(worldGroup.children[0]);
   }
 
-  let nx = chunk.cx;
-  let ny = chunk.cy;
-  let nz = chunk.cz;
+  if (sharedGeometry) sharedGeometry.dispose();
+  if (sharedMaterial) sharedMaterial.dispose();
 
-  if (lx < 0) {
-    nx--;
-    lx = 15;
-  } else if (lx > 15) {
-    nx++;
-    lx = 0;
-  }
+  sharedGeometry = new THREE.BoxGeometry(0.985, 0.985, 0.985);
 
-  if (ly < 0) {
-    ny--;
-    ly = 15;
-  } else if (ly > 15) {
-    ny++;
-    ly = 0;
-  }
-
-  if (lz < 0) {
-    nz--;
-    lz = 15;
-  } else if (lz > 15) {
-    nz++;
-    lz = 0;
-  }
-
-  const neighbor = chunks.get(chunkKey(nx, ny, nz));
-
-  return neighbor
-    ? neighbor.voxels[localIndex(lx, ly, lz)]
-    : 0;
+  sharedMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.92,
+    metalness: 0.0
+  });
 }
 
-function faceIsVisible(chunks, chunk, x, y, z, dx, dy, dz) {
-  const packed = getVoxel(
-    chunks,
-    chunk,
-    x + dx,
-    y + dy,
-    z + dz
-  );
+function getVoxel(voxelChunks, x, y, z) {
+  const cx = Math.floor(x / 16);
+  const cz = Math.floor(z / 16);
+  const sy = Math.floor(y / 16);
 
-  return packed === 0 || (packed >>> 31) === 1;
+  const chunk = voxelChunks.get(`${cx},${sy},${cz}`);
+
+  if (!chunk) return 0;
+
+  const lx = ((x % 16) + 16) % 16;
+  const lz = ((z % 16) + 16) % 16;
+  const ly = ((y % 16) + 16) % 16;
+
+  return chunk.flags[lx * 256 + lz * 16 + ly];
 }
 
-async function renderCompactChunks(chunks, bounds) {
-  clearWorldMeshes();
-  createSharedGeometry();
+async function renderVoxelChunks(voxelChunks, generation) {
+  clearWorld();
 
-  const dummy = new THREE.Object3D();
-  const color = new THREE.Color();
+  let batchMatrices = [];
+  let batchColors = [];
+  let rendered = 0;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
 
   const neighbors = [
     [1, 0, 0],
@@ -1135,63 +1046,78 @@ async function renderCompactChunks(chunks, bounds) {
     [0, 0, -1]
   ];
 
-  let rendered = 0;
-  let batchMesh = null;
-  let batchIndex = 0;
-  let scanned = 0;
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color();
 
-  const startBatch = () => {
-    batchMesh = new THREE.InstancedMesh(
-      sharedCubeGeometry,
-      sharedCubeMaterial,
-      BATCH_SIZE
+  const flush = () => {
+    if (!batchMatrices.length) return;
+
+    const mesh = new THREE.InstancedMesh(
+      sharedGeometry,
+      sharedMaterial,
+      batchMatrices.length
     );
 
-    batchMesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-    batchIndex = 0;
-  };
+    mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
 
-  const finishBatch = () => {
-    if (!batchMesh || batchIndex === 0) return;
+    for (let i = 0; i < batchMatrices.length; i++) {
+      dummy.position.fromArray(batchMatrices[i]);
+      dummy.updateMatrix();
 
-    batchMesh.count = batchIndex;
-    batchMesh.instanceMatrix.needsUpdate = true;
+      mesh.setMatrixAt(i, dummy.matrix);
 
-    if (batchMesh.instanceColor) {
-      batchMesh.instanceColor.needsUpdate = true;
+      color.setHex(batchColors[i]);
+      mesh.setColorAt(i, color);
     }
 
-    worldGroup.add(batchMesh);
-    batchMesh = null;
+    mesh.instanceMatrix.needsUpdate = true;
+
+    if (mesh.instanceColor) {
+      mesh.instanceColor.needsUpdate = true;
+    }
+
+    mesh.frustumCulled = true;
+    worldGroup.add(mesh);
+
+    rendered += batchMatrices.length;
+
+    batchMatrices = [];
+    batchColors = [];
   };
 
-  startBatch();
+  let done = 0;
 
-  for (const chunk of chunks.values()) {
-    for (let i = 0; i < chunk.voxels.length; i++) {
-      const packed = chunk.voxels[i];
+  for (const chunk of voxelChunks.values()) {
+    if (generation !== loadGeneration) return rendered;
 
-      if (!packed) continue;
+    const baseX = chunk.cx * 16;
+    const baseY = chunk.sy * 16;
+    const baseZ = chunk.cz * 16;
 
-      const x = Math.floor(i / 256);
-      const z = Math.floor(i / 16) % 16;
-      const y = i % 16;
+    for (let i = 0; i < 4096; i++) {
+      const flags = chunk.flags[i];
+
+      if (!(flags & 1)) continue;
+
+      const ix = Math.floor(i / 256);
+      const iz = Math.floor(i / 16) % 16;
+      const iy = i % 16;
+
+      const x = baseX + ix;
+      const y = baseY + iy;
+      const z = baseZ + iz;
 
       let visible = false;
 
       for (const [dx, dy, dz] of neighbors) {
-        if (
-          faceIsVisible(
-            chunks,
-            chunk,
-            x,
-            y,
-            z,
-            dx,
-            dy,
-            dz
-          )
-        ) {
+        const neighborFlags = getVoxel(
+          voxelChunks,
+          x + dx,
+          y + dy,
+          z + dz
+        );
+
+        if (!(neighborFlags & 1) || (neighborFlags & 2)) {
           visible = true;
           break;
         }
@@ -1199,59 +1125,50 @@ async function renderCompactChunks(chunks, bounds) {
 
       if (!visible) continue;
 
-      const wx = chunk.cx * 16 + x;
-      const wy = chunk.cy * 16 + y;
-      const wz = chunk.cz * 16 + z;
+      batchMatrices.push([x, y, z]);
+      batchColors.push(chunk.colors[i]);
 
-      dummy.position.set(wx, wy, wz);
-      dummy.updateMatrix();
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      minZ = Math.min(minZ, z);
 
-      batchMesh.setMatrixAt(batchIndex, dummy.matrix);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+      maxZ = Math.max(maxZ, z);
 
-      color.setHex(packed & 0x00ffffff);
-      batchMesh.setColorAt(batchIndex, color);
-
-      batchIndex++;
-      rendered++;
-      scanned++;
-
-      if (batchIndex >= BATCH_SIZE) {
-        finishBatch();
-        startBatch();
-      }
-
-      if (scanned % 50000 === 0) {
-        $('loadingText').textContent =
-          `表面を抽出中… ${rendered.toLocaleString()} 個を描画準備`;
-
-        await new Promise(resolve => setTimeout(resolve, 0));
+      if (batchMatrices.length >= RENDER_BATCH_SIZE) {
+        flush();
       }
     }
 
-    $('loadingText').textContent =
-      `表面を抽出中… ${rendered.toLocaleString()} 個を描画準備`;
+    done++;
 
-    await new Promise(resolve => setTimeout(resolve, 0));
+    if (done % 20 === 0) {
+      $('loadingText').textContent =
+        `表面を描画中… ${done.toLocaleString()} / ${voxelChunks.size.toLocaleString()} サブチャンク · ${rendered.toLocaleString()} ブロック`;
+
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
   }
 
-  finishBatch();
+  flush();
+
+  if (!rendered) {
+    throw new Error('表示できるブロックがありませんでした');
+  }
 
   const center = new THREE.Vector3(
-    (bounds.minX + bounds.maxX) / 2,
-    (bounds.minY + bounds.maxY) / 2,
-    (bounds.minZ + bounds.maxZ) / 2
+    (minX + maxX) / 2,
+    (minY + maxY) / 2,
+    (minZ + maxZ) / 2
   );
 
-  worldGroup.position.set(
-    -center.x,
-    -center.y,
-    -center.z
-  );
+  worldGroup.position.set(-center.x, -center.y, -center.z);
 
   const size = Math.max(
-    bounds.maxX - bounds.minX + 1,
-    bounds.maxY - bounds.minY + 1,
-    bounds.maxZ - bounds.minZ + 1,
+    maxX - minX + 1,
+    maxY - minY + 1,
+    maxZ - minZ + 1,
     20
   );
 
@@ -1281,5 +1198,3 @@ async function renderCompactChunks(chunks, bounds) {
 
   return rendered;
 }
-
-document.documentElement.dataset.viewerReady = 'true';
