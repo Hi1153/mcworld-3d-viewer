@@ -715,7 +715,6 @@
           <input
             type="file"
             id="worldFile"
-            accept=".mcworld,.zip"
             aria-label="Minecraftワールドファイルを選択"
           >
 
@@ -827,6 +826,7 @@
       const fileInput = document.getElementById('worldFile');
       const fileName = document.getElementById('fileName');
       const loadButton = document.getElementById('loadButton');
+      const status = document.getElementById('status');
 
       if (!fileInput || !fileName) return;
 
@@ -836,13 +836,44 @@
         if (!file) {
           fileName.textContent = '未選択';
           if (loadButton) loadButton.disabled = true;
+          if (status) {
+            status.textContent = '.mcworld ファイルを選択してください。';
+            status.className = 'status';
+          }
           return;
         }
 
-        fileName.textContent =
-          `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
+        const name = file.name;
+        const dotIndex = name.lastIndexOf('.');
+        const extension = dotIndex >= 0
+          ? name.slice(dotIndex + 1).toLowerCase()
+          : '';
 
-        if (loadButton) loadButton.disabled = false;
+        fileName.textContent =
+          `${name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
+
+        if (extension === 'mcworld') {
+          if (status) {
+            status.textContent =
+              'mcworldファイルを検出しました。3D描画できます。';
+            status.className = 'status success';
+          }
+          if (loadButton) loadButton.disabled = false;
+        } else if (extension === 'zip') {
+          if (status) {
+            status.textContent =
+              'ZIPファイルを検出しました。Minecraftワールド形式か確認して読み込みます。';
+            status.className = 'status';
+          }
+          if (loadButton) loadButton.disabled = false;
+        } else {
+          if (status) {
+            status.textContent =
+              `未対応の拡張子（${extension ? '.' + extension : 'なし'}）です。mcworldまたはzipファイルを選択してください。`;
+            status.className = 'status error';
+          }
+          if (loadButton) loadButton.disabled = true;
+        }
       });
     })();
   </script>
