@@ -1,3 +1,4 @@
+
 import * as THREE from 'https://esm.sh/three@0.180.0';
 import { OrbitControls } from 'https://esm.sh/three@0.180.0/examples/jsm/controls/OrbitControls.js';
 
@@ -16,27 +17,15 @@ let initialCamera = null;
 
 function setStatus(message, type = '') {
   if (!statusBox) return;
-
   statusBox.textContent = message;
   statusBox.className = `status ${type}`.trim();
 }
 
-function setLoading(
-  show,
-  title = '読み込み中…',
-  message = 'ワールドのデータを確認しています。'
-) {
+function setLoading(show, title = '読み込み中…', message = 'ワールドのデータを確認しています。') {
   if (!loading) return;
-
   loading.classList.toggle('hidden', !show);
-
-  if ($('loadingTitle')) {
-    $('loadingTitle').textContent = title;
-  }
-
-  if ($('loadingText')) {
-    $('loadingText').textContent = message;
-  }
+  if ($('loadingTitle')) $('loadingTitle').textContent = title;
+  if ($('loadingText')) $('loadingText').textContent = message;
 }
 
 function chooseFile(file) {
@@ -46,35 +35,19 @@ function chooseFile(file) {
 
   if (extension !== 'mcworld' && extension !== 'zip') {
     selectedFile = null;
-
-    if (loadButton) {
-      loadButton.disabled = true;
-    }
-
-    setStatus(
-      '未対応の拡張子です。.mcworld または .zip ファイルを選択してください。',
-      'error'
-    );
-
+    if (loadButton) loadButton.disabled = true;
+    setStatus('未対応の拡張子です。.mcworld または .zip ファイルを選択してください。', 'error');
     return;
   }
 
   selectedFile = file;
 
   const fileNameBox = $('fileName') || $('fileStatus');
-
   if (fileNameBox) {
-    fileNameBox.textContent =
-      `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
-  } else {
-    console.error(
-      'HTMLに id="fileName" または id="fileStatus" がありません。'
-    );
+    fileNameBox.textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
   }
 
-  if (loadButton) {
-    loadButton.disabled = false;
-  }
+  if (loadButton) loadButton.disabled = false;
 
   setStatus(
     extension === 'mcworld'
@@ -86,8 +59,7 @@ function chooseFile(file) {
 
 if (fileInput) {
   fileInput.addEventListener('change', (event) => {
-    const file = event.currentTarget.files?.[0];
-    chooseFile(file);
+    chooseFile(event.currentTarget.files?.[0]);
   });
 } else {
   console.error('HTMLに id="worldFile" がありません。');
@@ -121,9 +93,7 @@ if (dropzone) {
   });
 }
 
-if (loadButton) {
-  loadButton.addEventListener('click', loadWorld);
-}
+if (loadButton) loadButton.addEventListener('click', loadWorld);
 
 $('resetView')?.addEventListener('click', resetCamera);
 
@@ -140,9 +110,7 @@ window.addEventListener('keydown', (event) => {
 function initScene() {
   if (renderer) return;
 
-  if (!viewport) {
-    throw new Error('3D表示領域 viewport がHTMLにありません。');
-  }
+  if (!viewport) throw new Error('3D表示領域 viewport がHTMLにありません。');
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color('#f7faf9');
@@ -155,15 +123,8 @@ function initScene() {
     alpha: false
   });
 
-  renderer.setPixelRatio(
-    Math.min(window.devicePixelRatio || 1, 1.8)
-  );
-
-  renderer.setSize(
-    Math.max(1, viewport.clientWidth),
-    Math.max(1, viewport.clientHeight)
-  );
-
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.8));
+  renderer.setSize(Math.max(1, viewport.clientWidth), Math.max(1, viewport.clientHeight));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   viewport.appendChild(renderer.domElement);
 
@@ -174,9 +135,7 @@ function initScene() {
   controls.minDistance = 4;
   controls.maxDistance = 2500;
 
-  scene.add(
-    new THREE.HemisphereLight(0xffffff, 0x83928b, 2.15)
-  );
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x83928b, 2.15));
 
   const sun = new THREE.DirectionalLight(0xffffff, 2.1);
   sun.position.set(120, 180, 100);
@@ -206,7 +165,6 @@ function resizeRenderer() {
 
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
-
   renderer.setSize(w, h);
 }
 
@@ -245,17 +203,10 @@ function isAir(name) {
 }
 
 function parseNbtCompound(bytes, state) {
-  const view = new DataView(
-    bytes.buffer,
-    bytes.byteOffset,
-    bytes.byteLength
-  );
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
   const readU8 = () => {
-    if (state.p >= bytes.length) {
-      throw new Error('NBTデータが途中で終わっています');
-    }
-
+    if (state.p >= bytes.length) throw new Error('NBTデータが途中で終わっています');
     return bytes[state.p++];
   };
 
@@ -297,157 +248,95 @@ function parseNbtCompound(bytes, state) {
 
   const readString = () => {
     const length = readU16();
+    if (state.p + length > bytes.length) throw new Error('NBT文字列の長さが不正です');
 
-    if (state.p + length > bytes.length) {
-      throw new Error('NBT文字列の長さが不正です');
-    }
-
-    const s = new TextDecoder().decode(
-      bytes.subarray(state.p, state.p + length)
-    );
-
+    const s = new TextDecoder().decode(bytes.subarray(state.p, state.p + length));
     state.p += length;
     return s;
   };
 
   const payload = (type, depth = 0) => {
-    if (depth > 40) {
-      throw new Error('NBTの階層が深すぎます');
-    }
+    if (depth > 40) throw new Error('NBTの階層が深すぎます');
 
     switch (type) {
       case 1:
         return (readU8() << 24) >> 24;
-
       case 2:
         return readI16();
-
       case 3:
         return readI32();
-
       case 4:
         return readI64().toString();
-
       case 5:
         return readF32();
-
       case 6:
         return readF64();
-
       case 7: {
         const n = readI32();
-
-        if (
-          n < 0 ||
-          n > 10000000 ||
-          state.p + n > bytes.length
-        ) {
+        if (n < 0 || n > 10000000 || state.p + n > bytes.length) {
           throw new Error('NBT byte array length is invalid');
         }
-
         const a = bytes.slice(state.p, state.p + n);
         state.p += n;
-
         return a;
       }
-
       case 8:
         return readString();
-
       case 9: {
         const childType = readU8();
         const n = readI32();
-
-        if (n < 0 || n > 1000000) {
-          throw new Error('NBT list length is invalid');
-        }
+        if (n < 0 || n > 1000000) throw new Error('NBT list length is invalid');
 
         const a = [];
-
-        for (let i = 0; i < n; i++) {
-          a.push(payload(childType, depth + 1));
-        }
-
+        for (let i = 0; i < n; i++) a.push(payload(childType, depth + 1));
         return a;
       }
-
       case 10: {
         const o = {};
-
         while (state.p < bytes.length) {
           const t = readU8();
-
           if (t === 0) break;
-
           const name = readString();
           o[name] = payload(t, depth + 1);
         }
-
         return o;
       }
-
       case 11: {
         const n = readI32();
-
-        if (n < 0 || n > 1000000) {
-          throw new Error('NBT int array length is invalid');
-        }
+        if (n < 0 || n > 1000000) throw new Error('NBT int array length is invalid');
 
         const a = [];
-
-        for (let i = 0; i < n; i++) {
-          a.push(readI32());
-        }
-
+        for (let i = 0; i < n; i++) a.push(readI32());
         return a;
       }
-
       case 12: {
         const n = readI32();
-
-        if (n < 0 || n > 1000000) {
-          throw new Error('NBT long array length is invalid');
-        }
+        if (n < 0 || n > 1000000) throw new Error('NBT long array length is invalid');
 
         const a = [];
-
-        for (let i = 0; i < n; i++) {
-          a.push(readI64().toString());
-        }
-
+        for (let i = 0; i < n; i++) a.push(readI64().toString());
         return a;
       }
-
       default:
         throw new Error(`未対応のNBTタグ: ${type}`);
     }
   };
 
   const rootType = readU8();
-
-  if (rootType !== 10) {
-    throw new Error('ブロックパレットがNBT Compoundではありません');
-  }
+  if (rootType !== 10) throw new Error('ブロックパレットがNBT Compoundではありません');
 
   readString();
-
   return payload(10);
 }
 
 function readPalette(bytes, cursor) {
   const state = { p: cursor };
   const palette = parseNbtCompound(bytes, state);
-
-  return {
-    palette,
-    cursor: state.p
-  };
+  return { palette, cursor: state.p };
 }
 
 function parseStorage(bytes, cursor) {
-  if (cursor >= bytes.length) {
-    throw new Error('サブチャンクのストレージデータがありません');
-  }
+  if (cursor >= bytes.length) throw new Error('サブチャンクのストレージデータがありません');
 
   const header = bytes[cursor++];
   const bits = header >> 1;
@@ -467,12 +356,7 @@ function parseStorage(bytes, cursor) {
       throw new Error('ブロックインデックスのデータが不足しています');
     }
 
-    const view = new DataView(
-      bytes.buffer,
-      bytes.byteOffset,
-      bytes.byteLength
-    );
-
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const words = new Uint32Array(wordCount);
 
     for (let i = 0; i < wordCount; i++) {
@@ -481,25 +365,19 @@ function parseStorage(bytes, cursor) {
 
     cursor += wordCount * 4;
     indices = new Uint16Array(4096);
-
     const mask = (2 ** bits) - 1;
 
     for (let i = 0; i < 4096; i++) {
       const word = words[Math.floor(i / perWord)];
-      indices[i] =
-        (word >>> ((i % perWord) * bits)) & mask;
+      indices[i] = (word >>> ((i % perWord) * bits)) & mask;
     }
 
-    if (cursor + 4 > bytes.length) {
-      throw new Error('パレット数のデータが不足しています');
-    }
+    if (cursor + 4 > bytes.length) throw new Error('パレット数のデータが不足しています');
 
     const count = view.getInt32(cursor, true);
     cursor += 4;
 
-    if (count < 1 || count > 65536) {
-      throw new Error(`パレット数が不正です: ${count}`);
-    }
+    if (count < 1 || count > 65536) throw new Error(`パレット数が不正です: ${count}`);
 
     for (let i = 0; i < count; i++) {
       const result = readPalette(bytes, cursor);
@@ -515,10 +393,7 @@ function parseSubchunk(bytes, keyY) {
   if (!bytes || bytes.length < 2) return null;
 
   const version = bytes[0];
-
-  if (version !== 8 && version !== 9) {
-    return { unsupported: version };
-  }
+  if (version !== 8 && version !== 9) return { unsupported: version };
 
   let cursor = 1;
   const storageCount = bytes[cursor++];
@@ -544,10 +419,7 @@ function parseSubchunk(bytes, keyY) {
 
 function paletteName(paletteEntry) {
   if (typeof paletteEntry === 'string') return paletteEntry;
-
-  return paletteEntry?.name ||
-    paletteEntry?.Name ||
-    'unknown';
+  return paletteEntry?.name || paletteEntry?.Name || 'unknown';
 }
 
 function blockColor(name) {
@@ -555,17 +427,9 @@ function blockColor(name) {
 
   if (n.includes('water') || n.includes('bubble_column')) return 0x5a9fe8;
   if (n.includes('lava') || n.includes('magma')) return 0xe77935;
-
-  if (
-    n.includes('grass') ||
-    n.includes('leaves') ||
-    n.includes('moss') ||
-    n.includes('fern') ||
-    n.includes('vine')
-  ) {
+  if (n.includes('grass') || n.includes('leaves') || n.includes('moss') || n.includes('fern') || n.includes('vine')) {
     return n.includes('leaves') ? 0x4e9a53 : 0x70ad59;
   }
-
   if (n.includes('dirt') || n.includes('mud') || n.includes('farmland') || n.includes('podzol')) return 0x8b6548;
   if (n.includes('sand') || n.includes('sandstone') || n.includes('end_stone')) return 0xd9c58b;
   if (n.includes('snow') || n.includes('quartz') || n.includes('calcite') || n.includes('diorite')) return 0xe5e9e8;
@@ -604,15 +468,9 @@ async function loadWorld() {
   }
 
   loadButton.disabled = true;
-
   $('emptyState')?.classList.add('hidden');
 
-  setLoading(
-    true,
-    'ワールドを解析中…',
-    'LevelDBとチャンクデータを読み込んでいます。大きなワールドでは時間がかかります。'
-  );
-
+  setLoading(true, 'ワールドを解析中…', 'LevelDBとチャンクデータを読み込んでいます。大きなワールドでは時間がかかります。');
   setStatus('LevelDBを読み込んでいます…');
 
   if ($('chunkCount')) $('chunkCount').textContent = '…';
@@ -628,31 +486,17 @@ async function loadWorld() {
 
     const entries = await readMcworld(selectedFile);
 
-    if (!(entries instanceof Map)) {
-      throw new Error('LevelDBの読み込み結果が想定と異なります');
-    }
+    if (!(entries instanceof Map)) throw new Error('LevelDBの読み込み結果が想定と異なります');
 
-    setLoading(
-      true,
-      'チャンクを解析中…',
-      `${entries.size.toLocaleString()} 個のLevelDBキーを確認しました。`
-    );
-
-    setStatus(
-      `${entries.size.toLocaleString()} 個のLevelDBキーを取得。サブチャンクを探しています…`
-    );
+    setLoading(true, 'チャンクを解析中…', `${entries.size.toLocaleString()} 個のLevelDBキーを確認しました。`);
+    setStatus(`${entries.size.toLocaleString()} 個のLevelDBキーを取得。サブチャンクを探しています…`);
 
     const subs = [];
 
     for (const [key, entry] of entries) {
       const length = key.length;
 
-      if (
-        (length !== 10 && length !== 14) ||
-        keyByte(key, length - 2) !== 0x2f
-      ) {
-        continue;
-      }
+      if ((length !== 10 && length !== 14) || keyByte(key, length - 2) !== 0x2f) continue;
 
       const x = int32LEFromKey(key, 0);
       const z = int32LEFromKey(key, 4);
@@ -667,9 +511,7 @@ async function loadWorld() {
     }
 
     if (!subs.length) {
-      throw new Error(
-        'サブチャンクが見つかりません。対応するBedrock .mcworldか確認してください。'
-      );
+      throw new Error('サブチャンクが見つかりません。対応するBedrock .mcworldか確認してください。');
     }
 
     const blocks = new Map();
@@ -706,9 +548,7 @@ async function loadWorld() {
 
         const nameAt = (layer) => {
           if (!layer) return '';
-
           const paletteIndex = layer.indices ? layer.indices[i] : 0;
-
           return paletteName(layer.palette[paletteIndex]);
         };
 
@@ -725,12 +565,7 @@ async function loadWorld() {
         const wy = parsed.subY * 16 + iy;
         const wz = sub.z * 16 + iz;
 
-        blocks.set(blockKey(wx, wy, wz), {
-          x: wx,
-          y: wy,
-          z: wz,
-          name
-        });
+        blocks.set(blockKey(wx, wy, wz), { x: wx, y: wy, z: wz, name });
       }
 
       if (si % yieldedEvery === 0) {
@@ -738,52 +573,28 @@ async function loadWorld() {
           $('loadingText').textContent =
             `サブチャンク ${si + 1} / ${subs.length} · ブロック ${blocks.size.toLocaleString()}`;
         }
-
         await new Promise(resolve => setTimeout(resolve, 0));
       }
     }
 
     if (!blocks.size) {
-      throw new Error(
-        'ブロックを復元できませんでした。旧形式のワールドか、未対応のチャンク形式の可能性があります。'
-      );
+      throw new Error('ブロックを復元できませんでした。旧形式のワールドか、未対応のチャンク形式の可能性があります。');
     }
 
-    setLoading(
-      true,
-      '3Dモデルを作成中…',
-      `${blocks.size.toLocaleString()} 個のブロックを確認しました。表面を抽出しています。`
-    );
-
+    setLoading(true, '3Dモデルを作成中…', `${blocks.size.toLocaleString()} 個のブロックを確認しました。表面を抽出しています.`);
     await new Promise(resolve => setTimeout(resolve, 0));
 
-    const renderedCount = renderBlocks(blocks);
+    const renderedCount = await renderBlocks(blocks);
 
-    if ($('chunkCount')) {
-      $('chunkCount').textContent = parsedCount.toLocaleString();
-    }
+    if ($('chunkCount')) $('chunkCount').textContent = parsedCount.toLocaleString();
+    if ($('blockCount')) $('blockCount').textContent = blocks.size.toLocaleString();
+    if ($('renderCount')) $('renderCount').textContent = renderedCount.toLocaleString();
 
-    if ($('blockCount')) {
-      $('blockCount').textContent = blocks.size.toLocaleString();
-    }
-
-    if ($('renderCount')) {
-      $('renderCount').textContent = renderedCount.toLocaleString();
-    }
-
-    if ($('viewerHint')) {
-      $('viewerHint').textContent = `${selectedFile.name} · Overworld`;
-    }
-
-    if ($('dimensionLabel')) {
-      $('dimensionLabel').textContent = 'Overworld';
-    }
+    if ($('viewerHint')) $('viewerHint').textContent = `${selectedFile.name} · Overworld`;
+    if ($('dimensionLabel')) $('dimensionLabel').textContent = 'Overworld';
 
     const warnings = [];
-
-    if (unsupported) {
-      warnings.push(`${unsupported} 個の旧形式サブチャンクは未対応です`);
-    }
+    if (unsupported) warnings.push(`${unsupported} 個の旧形式サブチャンクは未対応です`);
 
     setStatus(
       `読み込み完了。${warnings.length ? warnings.join('。') + '。' : 'マウスや指で回転・ズームできます。'}`,
@@ -794,19 +605,14 @@ async function loadWorld() {
   } catch (error) {
     console.error(error);
     setLoading(false);
-
     $('emptyState')?.classList.remove('hidden');
-
-    setStatus(
-      `読み込みエラー: ${error?.message || error}`,
-      'error'
-    );
+    setStatus(`読み込みエラー: ${error?.message || error}`, 'error');
   } finally {
     loadButton.disabled = !selectedFile;
   }
 }
 
-function renderBlocks(blocks) {
+async function renderBlocks(blocks) {
   while (worldGroup.children.length) {
     const child = worldGroup.children[0];
     worldGroup.remove(child);
@@ -820,8 +626,7 @@ function renderBlocks(blocks) {
     }
   }
 
-  const all = Array.from(blocks.values());
-  const exposed = [];
+  if (!blocks.size) throw new Error('描画できるブロックがありません。');
 
   const neighbors = [
     [1, 0, 0],
@@ -832,46 +637,6 @@ function renderBlocks(blocks) {
     [0, 0, -1]
   ];
 
-  for (const block of all) {
-    let visible = false;
-
-    for (const [dx, dy, dz] of neighbors) {
-      const neighbor = blocks.get(
-        blockKey(block.x + dx, block.y + dy, block.z + dz)
-      );
-
-      if (!neighbor || isTransparentLike(neighbor.name)) {
-        visible = true;
-        break;
-      }
-    }
-
-    if (visible) exposed.push(block);
-  }
-
-  if (!exposed.length) {
-    throw new Error('描画できるブロックがありません。');
-  }
-
-  const geometry = new THREE.BoxGeometry(0.985, 0.985, 0.985);
-
-  const material = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    roughness: 0.92,
-    metalness: 0.0
-  });
-
-  const mesh = new THREE.InstancedMesh(
-    geometry,
-    material,
-    exposed.length
-  );
-
-  mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-
-  const dummy = new THREE.Object3D();
-  const color = new THREE.Color();
-
   let minX = Infinity;
   let minY = Infinity;
   let minZ = Infinity;
@@ -879,31 +644,91 @@ function renderBlocks(blocks) {
   let maxY = -Infinity;
   let maxZ = -Infinity;
 
-  exposed.forEach((block, i) => {
-    dummy.position.set(block.x, block.y, block.z);
-    dummy.updateMatrix();
-
-    mesh.setMatrixAt(i, dummy.matrix);
-
-    color.setHex(blockColor(block.name));
-    mesh.setColorAt(i, color);
-
+  for (const block of blocks.values()) {
     minX = Math.min(minX, block.x);
     minY = Math.min(minY, block.y);
     minZ = Math.min(minZ, block.z);
-
     maxX = Math.max(maxX, block.x);
     maxY = Math.max(maxY, block.y);
     maxZ = Math.max(maxZ, block.z);
-  });
-
-  mesh.instanceMatrix.needsUpdate = true;
-
-  if (mesh.instanceColor) {
-    mesh.instanceColor.needsUpdate = true;
   }
 
-  worldGroup.add(mesh);
+  const geometry = new THREE.BoxGeometry(0.985, 0.985, 0.985);
+
+  const material = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.92,
+    metalness: 0
+  });
+
+  const BATCH_SIZE = 12000;
+
+  let batch = [];
+  let renderedCount = 0;
+  let processedCount = 0;
+
+  function createBatch(items) {
+    if (!items.length) return;
+
+    const mesh = new THREE.InstancedMesh(geometry, material, items.length);
+    mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+
+    const dummy = new THREE.Object3D();
+    const color = new THREE.Color();
+
+    for (let i = 0; i < items.length; i++) {
+      const block = items[i];
+
+      dummy.position.set(block.x, block.y, block.z);
+      dummy.updateMatrix();
+
+      mesh.setMatrixAt(i, dummy.matrix);
+      color.setHex(blockColor(block.name));
+      mesh.setColorAt(i, color);
+    }
+
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+
+    worldGroup.add(mesh);
+    renderedCount += items.length;
+  }
+
+  for (const block of blocks.values()) {
+    let visible = false;
+
+    for (const [dx, dy, dz] of neighbors) {
+      const neighbor = blocks.get(blockKey(block.x + dx, block.y + dy, block.z + dz));
+
+      if (!neighbor || isTransparentLike(neighbor.name)) {
+        visible = true;
+        break;
+      }
+    }
+
+    if (visible) batch.push(block);
+    processedCount++;
+
+    if (batch.length >= BATCH_SIZE) {
+      createBatch(batch);
+      batch = [];
+
+      if ($('loadingText')) {
+        $('loadingText').textContent =
+          `表面を描画中… ${processedCount.toLocaleString()} / ${blocks.size.toLocaleString()} ブロック · 描画済み ${renderedCount.toLocaleString()}`;
+      }
+
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+  }
+
+  if (batch.length) createBatch(batch);
+
+  if (!renderedCount) {
+    geometry.dispose();
+    material.dispose();
+    throw new Error('描画できるブロックがありません。');
+  }
 
   const center = new THREE.Vector3(
     (minX + maxX) / 2,
@@ -922,12 +747,7 @@ function renderBlocks(blocks) {
 
   const distance = size * 1.2 + 25;
 
-  camera.position.set(
-    distance,
-    distance * 0.78,
-    distance
-  );
-
+  camera.position.set(distance, distance * 0.78, distance);
   camera.near = 0.1;
   camera.far = Math.max(5000, distance * 10);
   camera.updateProjectionMatrix();
@@ -944,5 +764,5 @@ function renderBlocks(blocks) {
 
   $('emptyState')?.classList.add('hidden');
 
-  return exposed.length;
+  return renderedCount;
 }
